@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#101418" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Mission Area" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Mission Area Companion</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icons/icon.svg" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIINfQWQf1zsFBi7pLPpU+0XYr1ZohA2B0s="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main id="app">
+      <div id="map" aria-label="Mission area map"></div>
+      <svg id="zoneOverlay" aria-hidden="true"></svg>
+
+      <section id="controls" aria-label="Map controls">
+        <button id="centerButton" type="button">Center</button>
+        <button id="transitToggleButton" type="button" aria-pressed="true">
+          Hide Lines/Stops
+        </button>
+        <button id="lineNamesToggleButton" type="button" aria-pressed="false">
+          Show Line Names
+        </button>
+        <button id="resetButton" type="button">Reset Map</button>
+        <button id="statusButton" type="button">Status</button>
+        <button id="rulesButton" type="button">Rules</button>
+      </section>
+
+      <section id="statusPanel" role="status" aria-live="polite">
+        Loading mission area...
+      </section>
+
+      <section id="warningOverlay" role="alert" aria-live="assertive" hidden>
+        <div>WARNING: YOU HAVE LEFT THE MISSION AREA.</div>
+        <div>RETURN IMMEDIATELY.</div>
+        <button id="testingIgnoreButton" type="button">
+          I am testing the app ignore this message
+        </button>
+      </section>
+    </main>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
+    <script src="pwa.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
