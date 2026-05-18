@@ -32,6 +32,7 @@ body {
 #map {
   z-index: 0;
   background: #1c252d;
+  touch-action: none;
 }
 
 #zoneOverlay {

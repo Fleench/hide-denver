@@ -43,6 +43,8 @@ let radiusLayer;
 let watchId = null;
 let lastPlayerPosition = null;
 let overlayUpdateFrame = null;
+let touchMapInteractionActive = false;
+let activeTouchPointers = 0;
 let longPressTimer = null;
 let longPressPoint = null;
 let longPressStartClient = null;
@@ -322,6 +324,8 @@ function createMap() {
       '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
   }).addTo(map);
 
+  map.on("movestart zoomstart", beginTouchMapInteraction);
+  map.on("moveend zoomend", endTouchMapInteraction);
   map.on("move zoom zoomend viewreset resize", scheduleZoneOverlayUpdate);
 
   requestAnimationFrame(() => {
@@ -414,21 +418,42 @@ function updateZoneOverlay() {
   drawFeatureOnOverlay(activeZoneFeature, "zone-active");
   if (radiusFeature) drawFeatureOnOverlay(radiusFeature, "zone-radius");
 
-  if (transitVisible && transitFeatureCollection) {
+  if (!touchMapInteractionActive && transitVisible && transitFeatureCollection) {
     drawTransitOnOverlay(transitFeatureCollection);
   }
-  if (lineNamesVisible && transitFeatureCollection) {
+  if (!touchMapInteractionActive && lineNamesVisible && transitFeatureCollection) {
     drawTransitLabelsOnOverlay(transitFeatureCollection);
   }
-  if (droppedPinLatLng) drawNearbyStopNames(droppedPinLatLng);
+  if (!touchMapInteractionActive && droppedPinLatLng) drawNearbyStopNames(droppedPinLatLng);
 }
 
 function scheduleZoneOverlayUpdate() {
   if (overlayUpdateFrame !== null) return;
+  if (touchMapInteractionActive && !isLikelyTouchDevice()) return;
   overlayUpdateFrame = window.requestAnimationFrame(() => {
     overlayUpdateFrame = null;
     updateZoneOverlay();
   });
+}
+
+function beginTouchMapInteraction() {
+  if (!isLikelyTouchDevice()) return;
+  touchMapInteractionActive = true;
+  clearLongPressTimer();
+  scheduleZoneOverlayUpdate();
+}
+
+function endTouchMapInteraction() {
+  if (!isLikelyTouchDevice()) return;
+  touchMapInteractionActive = false;
+  scheduleZoneOverlayUpdate();
+}
+
+function isLikelyTouchDevice() {
+  return (
+    (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) ||
+    navigator.maxTouchPoints > 0
+  );
 }
 
 function drawTransitOnOverlay(featureCollection) {
@@ -772,6 +797,15 @@ function bindLongPress() {
     if (event.button !== undefined && event.button !== 0) return;
     if (event.target.closest("#controls, #statusPanel, #warningOverlay")) return;
 
+    if (event.pointerType === "touch") {
+      activeTouchPointers += 1;
+      if (activeTouchPointers > 1) {
+        clearLongPressTimer();
+        touchMapInteractionActive = true;
+        return;
+      }
+    }
+
     longPressPoint = map.mouseEventToLatLng(event);
     longPressStartClient = { x: event.clientX, y: event.clientY };
     window.clearTimeout(longPressTimer);
@@ -788,8 +822,20 @@ function bindLongPress() {
     if (Math.hypot(dx, dy) > 10) clearLongPressTimer();
   });
 
-  container.addEventListener("pointerup", clearLongPressTimer);
-  container.addEventListener("pointercancel", clearLongPressTimer);
+  container.addEventListener("pointerup", (event) => {
+    if (event.pointerType === "touch" && activeTouchPointers > 0) {
+      activeTouchPointers -= 1;
+    }
+    if (activeTouchPointers === 0) touchMapInteractionActive = false;
+    clearLongPressTimer();
+  });
+  container.addEventListener("pointercancel", (event) => {
+    if (event.pointerType === "touch" && activeTouchPointers > 0) {
+      activeTouchPointers -= 1;
+    }
+    if (activeTouchPointers === 0) touchMapInteractionActive = false;
+    clearLongPressTimer();
+  });
   container.addEventListener("pointerleave", clearLongPressTimer);
 
   map.on("contextmenu", (event) => {
@@ -884,6 +930,8 @@ function resetMap() {
   activeZoneFeature = originalZoneFeature;
   radiusFeature = null;
   droppedPinLatLng = null;
+  activeTouchPointers = 0;
+  touchMapInteractionActive = false;
   warningIgnoredForTesting = false;
   if (pinMarker) pinMarker.remove();
   if (radiusLayer) radiusLayer.remove();

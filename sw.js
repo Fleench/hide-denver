@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_VERSION = "mission-area-v7";
+const CACHE_VERSION = "mission-area-v8";
 const APP_SHELL_CACHE = `${CACHE_VERSION}-app-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
