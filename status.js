@@ -3,11 +3,15 @@
 const statusCards = document.querySelector("#statusCards");
 const statusBackButton = document.querySelector("#statusBackButton");
 
-statusBackButton.addEventListener("click", () => {
+statusBackButton?.addEventListener("click", () => {
   window.location.href = "index.html";
 });
 
-loadStatus();
+if (statusCards) {
+  loadStatus();
+} else {
+  console.error("Status container was not found.");
+}
 
 async function loadStatus() {
   try {

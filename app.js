@@ -16,6 +16,7 @@ const elements = {
   map: document.querySelector("#map"),
   zoneOverlay: document.querySelector("#zoneOverlay"),
   centerButton: document.querySelector("#centerButton"),
+  controlsToggleButton: document.querySelector("#controlsToggleButton"),
   transitToggleButton: document.querySelector("#transitToggleButton"),
   lineNamesToggleButton: document.querySelector("#lineNamesToggleButton"),
   resetButton: document.querySelector("#resetButton"),
@@ -32,8 +33,8 @@ let activeZoneFeature;
 let originalBoundaryLayer;
 let activeBoundaryLayer;
 let transitFeatureCollection = null;
-let transitVisible = localStorage.getItem(TRANSIT_VISIBLE_KEY) !== "false";
-let lineNamesVisible = localStorage.getItem(LINE_NAMES_VISIBLE_KEY) === "true";
+let transitVisible = safeGetStorageItem(TRANSIT_VISIBLE_KEY) !== "false";
+let lineNamesVisible = safeGetStorageItem(LINE_NAMES_VISIBLE_KEY) === "true";
 let namedStops = [];
 let droppedPinLatLng = null;
 let radiusFeature = null;
@@ -45,6 +46,7 @@ let lastPlayerPosition = null;
 let overlayUpdateFrame = null;
 let touchMapInteractionActive = false;
 let activeTouchPointers = 0;
+const activeTouchPointerIds = new Set();
 let longPressTimer = null;
 let longPressPoint = null;
 let longPressStartClient = null;
@@ -55,25 +57,61 @@ bootstrap();
 async function bootstrap() {
   try {
     showStatus("Loading mission area...");
-    const [zoneFeature, linesStopsFeatureCollection] = await Promise.all([
-      loadPrimaryPolygon(),
-      loadLinesAndStops(),
-    ]);
+    const zoneFeature = await loadPrimaryPolygon();
     originalZoneFeature = zoneFeature;
-    transitFeatureCollection = linesStopsFeatureCollection;
     activeZoneFeature = originalZoneFeature;
 
     createMap();
-    renderLinesAndStops(linesStopsFeatureCollection);
     renderMissionLayers();
     bindControls();
     bindLongPress();
-    restoreStoredPin();
     fitToActiveZone();
+
+    let transitUnavailable = false;
+    try {
+      const linesStopsFeatureCollection = await loadLinesAndStops();
+      renderLinesAndStops(linesStopsFeatureCollection);
+    } catch (error) {
+      console.error("Transit overlays unavailable.", error);
+      transitUnavailable = true;
+      namedStops = [];
+      renderLinesAndStops({ type: "FeatureCollection", features: [] });
+    }
+
+    const restoredPin = restoreStoredPin();
     startForegroundTracking();
-    showStatus("Long-press the map to shrink the mission area to a 1/4-mile radius.");
+    if (!restoredPin) {
+      const message = transitUnavailable
+        ? "Transit overlays unavailable. Long-press the map to shrink the mission area to a 1/4-mile radius."
+        : "Long-press the map to shrink the mission area to a 1/4-mile radius.";
+      showStatus(message, transitUnavailable);
+    }
   } catch (error) {
     showStatus(error.message || String(error), true);
+  }
+}
+
+function safeGetStorageItem(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch (error) {
+    return null;
+  }
+}
+
+function safeSetStorageItem(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch (error) {
+    // Storage can be unavailable in private or restricted browser contexts.
+  }
+}
+
+function safeRemoveStorageItem(key) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch (error) {
+    // Storage can be unavailable in private or restricted browser contexts.
   }
 }
 
@@ -379,7 +417,7 @@ function renderLinesAndStops(featureCollection) {
 
 function toggleTransitLayer() {
   transitVisible = !transitVisible;
-  localStorage.setItem(TRANSIT_VISIBLE_KEY, String(transitVisible));
+  safeSetStorageItem(TRANSIT_VISIBLE_KEY, String(transitVisible));
   renderLinesAndStops(transitFeatureCollection);
 }
 
@@ -388,11 +426,12 @@ function updateTransitToggleButton() {
     ? "Hide Lines/Stops"
     : "Show Lines/Stops";
   elements.transitToggleButton.setAttribute("aria-pressed", String(transitVisible));
+  updateLineNamesToggleButton();
 }
 
 function toggleLineNames() {
   lineNamesVisible = !lineNamesVisible;
-  localStorage.setItem(LINE_NAMES_VISIBLE_KEY, String(lineNamesVisible));
+  safeSetStorageItem(LINE_NAMES_VISIBLE_KEY, String(lineNamesVisible));
   updateLineNamesToggleButton();
   scheduleZoneOverlayUpdate();
 }
@@ -402,6 +441,7 @@ function updateLineNamesToggleButton() {
     ? "Hide Line Names"
     : "Show Line Names";
   elements.lineNamesToggleButton.setAttribute("aria-pressed", String(lineNamesVisible));
+  elements.lineNamesToggleButton.disabled = !transitVisible;
 }
 
 function updateZoneOverlay() {
@@ -421,10 +461,12 @@ function updateZoneOverlay() {
   if (!touchMapInteractionActive && transitVisible && transitFeatureCollection) {
     drawTransitOnOverlay(transitFeatureCollection);
   }
-  if (!touchMapInteractionActive && lineNamesVisible && transitFeatureCollection) {
+  if (!touchMapInteractionActive && transitVisible && lineNamesVisible && transitFeatureCollection) {
     drawTransitLabelsOnOverlay(transitFeatureCollection);
   }
-  if (!touchMapInteractionActive && droppedPinLatLng) drawNearbyStopNames(droppedPinLatLng);
+  if (!touchMapInteractionActive && transitVisible && droppedPinLatLng) {
+    drawNearbyStopNames(droppedPinLatLng);
+  }
 }
 
 function scheduleZoneOverlayUpdate() {
@@ -690,6 +732,7 @@ function ringToPoints(ring) {
 }
 
 function bindControls() {
+  elements.controlsToggleButton.addEventListener("click", toggleControls);
   elements.centerButton.addEventListener("click", fitToActiveZone);
   elements.transitToggleButton.addEventListener("click", toggleTransitLayer);
   elements.lineNamesToggleButton.addEventListener("click", toggleLineNames);
@@ -718,6 +761,18 @@ function bindControls() {
   window.addEventListener("pageshow", () => {
     if (!document.hidden) startForegroundTracking();
   });
+}
+
+function toggleControls() {
+  const collapsed = elements.controlsToggleButton.getAttribute("aria-expanded") === "true";
+  elements.controlsToggleButton.setAttribute("aria-expanded", String(!collapsed));
+  elements.controlsToggleButton.textContent = collapsed ? "Show Controls" : "Hide Controls";
+  elements.controlsToggleButton.classList.toggle("is-collapsed", collapsed);
+  elements.controlsToggleButton.setAttribute(
+    "aria-label",
+    collapsed ? "Show map controls" : "Hide map controls",
+  );
+  document.body.classList.toggle("controls-collapsed", collapsed);
 }
 
 // Foreground lifecycle state: geolocation watch runs only while the page is visible.
@@ -795,10 +850,22 @@ function bindLongPress() {
 
   container.addEventListener("pointerdown", (event) => {
     if (event.button !== undefined && event.button !== 0) return;
-    if (event.target.closest("#controls, #statusPanel, #warningOverlay")) return;
+    if (event.target.closest("#controls, #controlsToggleButton, #statusPanel, #warningOverlay")) {
+      return;
+    }
 
     if (event.pointerType === "touch") {
-      activeTouchPointers += 1;
+      if (!activeTouchPointerIds.has(event.pointerId)) {
+        activeTouchPointerIds.add(event.pointerId);
+        activeTouchPointers += 1;
+      }
+      if (container.setPointerCapture) {
+        try {
+          container.setPointerCapture(event.pointerId);
+        } catch (error) {
+          // The browser may reject capture if the pointer is already gone.
+        }
+      }
       if (activeTouchPointers > 1) {
         clearLongPressTimer();
         touchMapInteractionActive = true;
@@ -823,25 +890,43 @@ function bindLongPress() {
   });
 
   container.addEventListener("pointerup", (event) => {
-    if (event.pointerType === "touch" && activeTouchPointers > 0) {
-      activeTouchPointers -= 1;
-    }
-    if (activeTouchPointers === 0) touchMapInteractionActive = false;
+    endTouchPointer(event);
     clearLongPressTimer();
   });
   container.addEventListener("pointercancel", (event) => {
-    if (event.pointerType === "touch" && activeTouchPointers > 0) {
-      activeTouchPointers -= 1;
-    }
-    if (activeTouchPointers === 0) touchMapInteractionActive = false;
+    endTouchPointer(event);
     clearLongPressTimer();
   });
-  container.addEventListener("pointerleave", clearLongPressTimer);
+  container.addEventListener("lostpointercapture", endTouchPointer);
+  container.addEventListener("pointerleave", (event) => {
+    clearLongPressTimer();
+    if (
+      event.pointerType === "touch" &&
+      (!container.hasPointerCapture || !container.hasPointerCapture(event.pointerId))
+    ) {
+      endTouchPointer(event);
+    }
+  });
 
   map.on("contextmenu", (event) => {
     event.originalEvent.preventDefault();
     shrinkToPin(event.latlng);
   });
+}
+
+function endTouchPointer(event) {
+  if (event.pointerType !== "touch") return;
+
+  if (activeTouchPointerIds.delete(event.pointerId)) {
+    activeTouchPointers = Math.max(0, activeTouchPointers - 1);
+  } else if (activeTouchPointers > activeTouchPointerIds.size) {
+    activeTouchPointers = activeTouchPointerIds.size;
+  }
+
+  if (activeTouchPointers === 0) {
+    touchMapInteractionActive = false;
+    scheduleZoneOverlayUpdate();
+  }
 }
 
 function shrinkToPin(latlng, options = {}) {
@@ -931,13 +1016,14 @@ function resetMap() {
   radiusFeature = null;
   droppedPinLatLng = null;
   activeTouchPointers = 0;
+  activeTouchPointerIds.clear();
   touchMapInteractionActive = false;
   warningIgnoredForTesting = false;
   if (pinMarker) pinMarker.remove();
   if (radiusLayer) radiusLayer.remove();
   pinMarker = null;
   radiusLayer = null;
-  localStorage.removeItem(STORED_PIN_KEY);
+  safeRemoveStorageItem(STORED_PIN_KEY);
   renderMissionLayers();
   fitToActiveZone();
   scheduleZoneOverlayUpdate();
@@ -946,7 +1032,7 @@ function resetMap() {
 }
 
 function savePin(latlng) {
-  localStorage.setItem(
+  safeSetStorageItem(
     STORED_PIN_KEY,
     JSON.stringify({
       lat: latlng.lat,
@@ -957,8 +1043,8 @@ function savePin(latlng) {
 }
 
 function restoreStoredPin() {
-  const rawPin = localStorage.getItem(STORED_PIN_KEY);
-  if (!rawPin) return;
+  const rawPin = safeGetStorageItem(STORED_PIN_KEY);
+  if (!rawPin) return false;
 
   try {
     const parsed = JSON.parse(rawPin);
@@ -971,9 +1057,11 @@ function restoreStoredPin() {
       showMessage: false,
     });
     showStatus("Restored saved pin from this browser.");
+    return true;
   } catch (error) {
-    localStorage.removeItem(STORED_PIN_KEY);
+    safeRemoveStorageItem(STORED_PIN_KEY);
     showStatus("Saved pin could not be restored and was cleared.", true);
+    return false;
   }
 }
 
@@ -1002,12 +1090,14 @@ function getExteriorRings(feature) {
 }
 
 function showStatus(message, persistent = false) {
+  window.clearTimeout(showStatus.timeoutId);
+  showStatus.timeoutId = null;
   elements.statusPanel.textContent = message;
   elements.statusPanel.classList.add("is-visible");
   if (!persistent) {
-    window.clearTimeout(showStatus.timeoutId);
     showStatus.timeoutId = window.setTimeout(() => {
       elements.statusPanel.classList.remove("is-visible");
+      showStatus.timeoutId = null;
     }, 5200);
   }
 }

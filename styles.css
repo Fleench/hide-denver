@@ -211,6 +211,10 @@ body {
   max-width: none !important;
 }
 
+.controls-toggle {
+  display: none;
+}
+
 #controls {
   position: absolute;
   z-index: 1500;
@@ -218,7 +222,7 @@ body {
   left: max(12px, env(safe-area-inset-left));
   right: max(12px, env(safe-area-inset-right));
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, auto));
+  grid-template-columns: repeat(auto-fit, minmax(120px, auto));
   align-items: stretch;
   justify-content: end;
   gap: 8px;
@@ -241,6 +245,10 @@ button {
 
 button:active {
   transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: 0.55;
 }
 
 #statusPanel {
@@ -635,8 +643,26 @@ button:active {
 }
 
 @media (max-width: 620px) {
+  .controls-toggle {
+    position: absolute;
+    z-index: 1501;
+    top: max(12px, env(safe-area-inset-top));
+    right: max(12px, env(safe-area-inset-right));
+    display: block;
+  }
+
+  .controls-toggle.is-collapsed {
+    background: rgb(0 240 255 / 0.9);
+    color: #071015;
+  }
+
   #controls {
+    top: calc(max(12px, env(safe-area-inset-top)) + 52px);
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .controls-collapsed #controls {
+    display: none;
   }
 
   #controls button {

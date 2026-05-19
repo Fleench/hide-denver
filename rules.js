@@ -3,11 +3,15 @@
 const rulesCards = document.querySelector("#rulesCards");
 const rulesBackButton = document.querySelector("#rulesBackButton");
 
-rulesBackButton.addEventListener("click", () => {
+rulesBackButton?.addEventListener("click", () => {
   window.location.href = "index.html";
 });
 
-loadRules();
+if (rulesCards) {
+  loadRules();
+} else {
+  console.error("Rules container was not found.");
+}
 
 async function loadRules() {
   try {
