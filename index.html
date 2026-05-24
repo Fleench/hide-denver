@@ -37,6 +37,7 @@
 
       <section id="controls" aria-label="Map controls">
         <button id="centerButton" type="button">Center</button>
+        <button id="followButton" type="button" aria-pressed="false">Follow Me</button>
         <button id="transitToggleButton" type="button" aria-pressed="true">
           Hide Lines/Stops
         </button>
@@ -46,6 +47,34 @@
         <button id="resetButton" type="button">Reset Map</button>
         <button id="statusButton" type="button">Status</button>
         <button id="rulesButton" type="button">Rules</button>
+      </section>
+
+      <section id="zoomControls" aria-label="Map zoom controls">
+        <button id="zoomInButton" type="button" aria-label="Zoom in">+</button>
+        <button id="zoomOutButton" type="button" aria-label="Zoom out">-</button>
+      </section>
+
+      <section
+        id="visibleRoutesPanel"
+        class="visible-routes-panel"
+        aria-label="Visible transit routes"
+      >
+        <button
+          id="visibleRoutesToggleButton"
+          class="visible-routes-toggle"
+          type="button"
+          aria-controls="visibleRoutesPanel"
+          aria-expanded="false"
+        >
+          Routes
+        </button>
+        <div class="visible-routes-content">
+          <div class="visible-routes-header">
+            <h2>Visible Routes</h2>
+            <span id="visibleRoutesSummary">0 routes</span>
+          </div>
+          <div id="visibleRoutesList" class="visible-routes-list"></div>
+        </div>
       </section>
 
       <section id="statusPanel" role="status" aria-live="polite">

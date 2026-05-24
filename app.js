@@ -11,12 +11,32 @@ const SHRINK_RADIUS_MILES = 0.25;
 const STORED_PIN_KEY = "hideDenver.activePin";
 const TRANSIT_VISIBLE_KEY = "hideDenver.linesStopsVisible";
 const LINE_NAMES_VISIBLE_KEY = "hideDenver.lineNamesVisible";
+const WARNING_START_MONTH_INDEX = 4;
+const WARNING_START_DAY = 28;
+const WARNING_END_MONTH_INDEX = 5;
+const WARNING_END_DAY = 2;
+const ROUTE_TYPE_COLORS = {
+  LOC: ["#e11d48", "#0ea5e9", "#f59e0b"],
+  REG: ["#2563eb", "#dc2626", "#65a30d"],
+  CNR: ["#7c3aed", "#0891b2", "#ea580c"],
+  SKY: ["#0284c7", "#be123c", "#16a34a"],
+  LRT: ["#16a34a", "#9333ea", "#f97316"],
+  OFF: ["#06b6d4", "#f43f5e", "#84cc16"],
+  UNKNOWN: ["#ff8a1c", "#00f0ff", "#f6d047"],
+};
 
 const elements = {
   map: document.querySelector("#map"),
   zoneOverlay: document.querySelector("#zoneOverlay"),
   centerButton: document.querySelector("#centerButton"),
+  followButton: document.querySelector("#followButton"),
   controlsToggleButton: document.querySelector("#controlsToggleButton"),
+  zoomInButton: document.querySelector("#zoomInButton"),
+  zoomOutButton: document.querySelector("#zoomOutButton"),
+  visibleRoutesPanel: document.querySelector("#visibleRoutesPanel"),
+  visibleRoutesToggleButton: document.querySelector("#visibleRoutesToggleButton"),
+  visibleRoutesSummary: document.querySelector("#visibleRoutesSummary"),
+  visibleRoutesList: document.querySelector("#visibleRoutesList"),
   transitToggleButton: document.querySelector("#transitToggleButton"),
   lineNamesToggleButton: document.querySelector("#lineNamesToggleButton"),
   resetButton: document.querySelector("#resetButton"),
@@ -35,6 +55,8 @@ let activeBoundaryLayer;
 let transitFeatureCollection = null;
 let transitVisible = safeGetStorageItem(TRANSIT_VISIBLE_KEY) !== "false";
 let lineNamesVisible = safeGetStorageItem(LINE_NAMES_VISIBLE_KEY) === "true";
+let followMeEnabled = false;
+let visibleRoutesPanelOpen = false;
 let namedStops = [];
 let droppedPinLatLng = null;
 let radiusFeature = null;
@@ -51,12 +73,14 @@ let longPressTimer = null;
 let longPressPoint = null;
 let longPressStartClient = null;
 let warningIgnoredForTesting = false;
+let tileErrorShown = false;
 
 bootstrap();
 
 async function bootstrap() {
   try {
-    showStatus("Loading mission area...");
+    bindConnectivityEvents();
+    showStatus("Loading mission area...", { persistent: true });
     const zoneFeature = await loadPrimaryPolygon();
     originalZoneFeature = zoneFeature;
     activeZoneFeature = originalZoneFeature;
@@ -69,6 +93,7 @@ async function bootstrap() {
 
     let transitUnavailable = false;
     try {
+      showStatus("Loading transit lines and stops...", { persistent: true });
       const linesStopsFeatureCollection = await loadLinesAndStops();
       renderLinesAndStops(linesStopsFeatureCollection);
     } catch (error) {
@@ -76,6 +101,10 @@ async function bootstrap() {
       transitUnavailable = true;
       namedStops = [];
       renderLinesAndStops({ type: "FeatureCollection", features: [] });
+      showStatus("Transit overlays unavailable. Map and geofence still work.", {
+        persistent: true,
+        error: true,
+      });
     }
 
     const restoredPin = restoreStoredPin();
@@ -84,10 +113,10 @@ async function bootstrap() {
       const message = transitUnavailable
         ? "Transit overlays unavailable. Long-press the map to shrink the mission area to a 1/4-mile radius."
         : "Long-press the map to shrink the mission area to a 1/4-mile radius.";
-      showStatus(message, transitUnavailable);
+      showStatus(message, { persistent: transitUnavailable, error: transitUnavailable });
     }
   } catch (error) {
-    showStatus(error.message || String(error), true);
+    showStatus(error.message || String(error), { persistent: true, error: true });
   }
 }
 
@@ -210,17 +239,19 @@ async function loadLinesAndStops() {
   const routeMetadata = buildRouteMetadata([busRoutesGeojson, railLinesGeojson]);
   const stopMetadata = buildStopMetadata([busStopsGeojson, railStationsGeojson]);
   namedStops = buildNamedFilteredStops(stopsGeojson, stopMetadata);
+  const lineFeatures = geometryCollectionToFeatures(linesGeojson, { layer: "line" }).map((feature) => ({
+    ...feature,
+    properties: {
+      ...feature.properties,
+      ...(routeMetadata.get(geometrySignature(feature.geometry)) || {}),
+    },
+  }));
+  assignTransitLineColors(lineFeatures);
 
   return {
     type: "FeatureCollection",
     features: [
-      ...geometryCollectionToFeatures(linesGeojson, { layer: "line" }).map((feature) => ({
-        ...feature,
-        properties: {
-          ...feature.properties,
-          ...(routeMetadata.get(geometrySignature(feature.geometry)) || {}),
-        },
-      })),
+      ...lineFeatures,
       ...geometryCollectionToFeatures(stopsGeojson, { layer: "stop" }),
     ],
   };
@@ -236,11 +267,111 @@ function buildRouteMetadata(routeGeojsons) {
       metadata.set(geometrySignature(feature.geometry), {
         route,
         name,
+        type: String(feature.properties?.TYPE || "UNKNOWN").trim() || "UNKNOWN",
+        service: String(feature.properties?.SERVICE || "").trim(),
         label: formatLineLabel(route, name),
       });
     }
   }
   return metadata;
+}
+
+function assignTransitLineColors(lineFeatures) {
+  const lineGroups = groupByRouteType(lineFeatures);
+
+  for (const [routeType, features] of lineGroups) {
+    const palette = ROUTE_TYPE_COLORS[routeType] || ROUTE_TYPE_COLORS.UNKNOWN;
+    const conflicts = buildLineConflictGraph(features);
+    const orderedFeatures = [...features].sort(
+      (a, b) => conflicts.get(b).size - conflicts.get(a).size,
+    );
+
+    for (const feature of orderedFeatures) {
+      const neighborColors = new Set(
+        [...conflicts.get(feature)]
+          .map((neighbor) => neighbor.properties?.color)
+          .filter(Boolean),
+      );
+      const color = palette.find((candidate) => !neighborColors.has(candidate))
+        || chooseLeastConflictingColor(palette, conflicts.get(feature));
+      feature.properties.color = color;
+    }
+  }
+}
+
+function groupByRouteType(lineFeatures) {
+  const groups = new Map();
+  for (const feature of lineFeatures) {
+    const routeType = getRouteType(feature);
+    if (!groups.has(routeType)) groups.set(routeType, []);
+    groups.get(routeType).push(feature);
+  }
+  return groups;
+}
+
+function getRouteType(feature) {
+  return String(feature.properties?.type || "UNKNOWN").trim().toUpperCase() || "UNKNOWN";
+}
+
+function buildLineConflictGraph(features) {
+  const conflicts = new Map(features.map((feature) => [feature, new Set()]));
+  const segmentSignatures = new Map(
+    features.map((feature) => [feature, getLineSegmentSignatures(feature.geometry)]),
+  );
+
+  for (let i = 0; i < features.length; i += 1) {
+    for (let j = i + 1; j < features.length; j += 1) {
+      if (
+        linesHavePointIntersection(features[i], features[j]) &&
+        !lineSegmentSetsOverlap(segmentSignatures.get(features[i]), segmentSignatures.get(features[j]))
+      ) {
+        conflicts.get(features[i]).add(features[j]);
+        conflicts.get(features[j]).add(features[i]);
+      }
+    }
+  }
+
+  return conflicts;
+}
+
+function linesHavePointIntersection(firstFeature, secondFeature) {
+  try {
+    return turf.lineIntersect(firstFeature, secondFeature).features.length > 0;
+  } catch (error) {
+    return false;
+  }
+}
+
+function getLineSegmentSignatures(geometry) {
+  const signatures = new Set();
+  for (const line of getLineCoordinateSequences(geometry)) {
+    for (let index = 1; index < line.length; index += 1) {
+      const start = coordinateColorSignature(line[index - 1]);
+      const end = coordinateColorSignature(line[index]);
+      signatures.add(start < end ? `${start}|${end}` : `${end}|${start}`);
+    }
+  }
+  return signatures;
+}
+
+function coordinateColorSignature([lng, lat]) {
+  return `${Number(lng).toFixed(5)},${Number(lat).toFixed(5)}`;
+}
+
+function lineSegmentSetsOverlap(firstSegments, secondSegments) {
+  for (const segment of firstSegments) {
+    if (secondSegments.has(segment)) return true;
+  }
+  return false;
+}
+
+function chooseLeastConflictingColor(palette, neighbors) {
+  return palette
+    .map((color) => ({
+      color,
+      conflicts: [...neighbors].filter((neighbor) => neighbor.properties?.color === color).length,
+    }))
+    .sort((a, b) => a.conflicts - b.conflicts)[0].color;
 }
 
 function buildStopMetadata(stopGeojsons) {
@@ -348,11 +479,11 @@ function createMap() {
     zoomSnap: 0.25,
     zoomDelta: 0.25,
     wheelPxPerZoomLevel: 80,
-    zoomControl: true,
+    zoomControl: false,
     preferCanvas: true,
   });
 
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+  const tileLayer = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
     subdomains: "abcd",
     tileSize: 256,
     zoomOffset: 0,
@@ -361,9 +492,18 @@ function createMap() {
     attribution:
       '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
   }).addTo(map);
+  tileLayer.on("tileerror", () => {
+    if (tileErrorShown) return;
+    tileErrorShown = true;
+    showStatus("Map tiles are not loading. Check connection; cached data may still work.", {
+      persistent: true,
+      error: true,
+    });
+  });
 
   map.on("movestart zoomstart", beginTouchMapInteraction);
   map.on("moveend zoomend", endTouchMapInteraction);
+  map.on("moveend zoomend resize", updateVisibleRoutesPanel);
   map.on("move zoom zoomend viewreset resize", scheduleZoneOverlayUpdate);
 
   requestAnimationFrame(() => {
@@ -412,6 +552,7 @@ function renderLinesAndStops(featureCollection) {
   transitFeatureCollection = featureCollection;
   updateTransitToggleButton();
   updateLineNamesToggleButton();
+  updateVisibleRoutesPanel();
   scheduleZoneOverlayUpdate();
 }
 
@@ -522,6 +663,7 @@ function drawTransitLineFeature(feature) {
     const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
     polyline.setAttribute("class", "transit-line");
     polyline.setAttribute("points", points);
+    polyline.style.setProperty("--line-color", feature.properties?.color || "#ff8a1c");
     elements.zoneOverlay.appendChild(polyline);
   }
 }
@@ -683,6 +825,12 @@ function formatLineLabel(route, name) {
   return route || name || "";
 }
 
+function getRouteGroup(feature) {
+  const type = getRouteType(feature);
+  const service = String(feature.properties?.service || "").toUpperCase();
+  return type === "LRT" || type === "OFF" || service.includes("RAIL") ? "Rail" : "Bus";
+}
+
 function drawDimMaskOnOverlay(size) {
   const viewportPath = `M0 0H${size.x}V${size.y}H0Z`;
   const activeZonePaths = getExteriorRings(activeZoneFeature)
@@ -733,7 +881,11 @@ function ringToPoints(ring) {
 
 function bindControls() {
   elements.controlsToggleButton.addEventListener("click", toggleControls);
+  elements.zoomInButton.addEventListener("click", () => map.zoomIn());
+  elements.zoomOutButton.addEventListener("click", () => map.zoomOut());
+  elements.visibleRoutesToggleButton.addEventListener("click", toggleVisibleRoutesPanel);
   elements.centerButton.addEventListener("click", fitToActiveZone);
+  elements.followButton.addEventListener("click", toggleFollowMe);
   elements.transitToggleButton.addEventListener("click", toggleTransitLayer);
   elements.lineNamesToggleButton.addEventListener("click", toggleLineNames);
   elements.resetButton.addEventListener("click", resetMap);
@@ -763,6 +915,26 @@ function bindControls() {
   });
 }
 
+function bindConnectivityEvents() {
+  window.addEventListener("online", () => {
+    tileErrorShown = false;
+    showStatus("Back online. Map tiles and live data can load again.");
+  });
+  window.addEventListener("offline", () => {
+    showStatus("Offline. Cached app data may still work, but map tiles and fresh data may be unavailable.", {
+      persistent: true,
+      error: true,
+    });
+  });
+
+  if (navigator.onLine === false) {
+    showStatus("Offline. Cached app data may still work, but map tiles and fresh data may be unavailable.", {
+      persistent: true,
+      error: true,
+    });
+  }
+}
+
 function toggleControls() {
   const collapsed = elements.controlsToggleButton.getAttribute("aria-expanded") === "true";
   elements.controlsToggleButton.setAttribute("aria-expanded", String(!collapsed));
@@ -773,6 +945,140 @@ function toggleControls() {
     collapsed ? "Show map controls" : "Hide map controls",
   );
   document.body.classList.toggle("controls-collapsed", collapsed);
+}
+
+function toggleVisibleRoutesPanel() {
+  visibleRoutesPanelOpen = !visibleRoutesPanelOpen;
+  elements.visibleRoutesPanel.classList.toggle("is-open", visibleRoutesPanelOpen);
+  elements.visibleRoutesToggleButton.setAttribute("aria-expanded", String(visibleRoutesPanelOpen));
+  elements.visibleRoutesToggleButton.textContent = visibleRoutesPanelOpen ? "Hide Routes" : "Routes";
+  if (visibleRoutesPanelOpen) updateVisibleRoutesPanel();
+}
+
+function toggleFollowMe() {
+  followMeEnabled = !followMeEnabled;
+  updateFollowButton();
+  if (followMeEnabled && playerMarker) {
+    map.panTo(playerMarker.getLatLng(), { animate: true });
+  }
+}
+
+function updateFollowButton() {
+  elements.followButton.textContent = followMeEnabled ? "Following" : "Follow Me";
+  elements.followButton.setAttribute("aria-pressed", String(followMeEnabled));
+}
+
+function updateVisibleRoutesPanel() {
+  if (!elements.visibleRoutesList || !elements.visibleRoutesSummary) return;
+  const visibleRoutes = getVisibleTransitRoutes();
+  const railRoutes = visibleRoutes.filter((route) => route.group === "Rail");
+  const busRoutes = visibleRoutes.filter((route) => route.group === "Bus");
+
+  elements.visibleRoutesSummary.textContent = `${visibleRoutes.length.toLocaleString()} routes`;
+  elements.visibleRoutesList.replaceChildren();
+
+  if (!visibleRoutes.length) {
+    const empty = document.createElement("p");
+    empty.className = "visible-routes-empty";
+    empty.textContent = transitVisible
+      ? "No transit routes are visible in this map view."
+      : "Transit lines and stops are hidden.";
+    elements.visibleRoutesList.appendChild(empty);
+    return;
+  }
+
+  elements.visibleRoutesList.append(
+    renderVisibleRouteGroup("Rail", railRoutes),
+    renderVisibleRouteGroup("Bus", busRoutes),
+  );
+}
+
+function getVisibleTransitRoutes() {
+  if (!map || !transitVisible || !transitFeatureCollection) return [];
+
+  const visibleBounds = map.getBounds();
+  const viewportPolygon = turf.bboxPolygon([
+    visibleBounds.getWest(),
+    visibleBounds.getSouth(),
+    visibleBounds.getEast(),
+    visibleBounds.getNorth(),
+  ]);
+  const routesByKey = new Map();
+
+  for (const feature of transitFeatureCollection.features || []) {
+    if (feature.properties?.layer !== "line") continue;
+    if (!feature.properties?.label) continue;
+    if (!lineFeatureIntersectsViewport(feature, viewportPolygon, visibleBounds)) continue;
+
+    const group = getRouteGroup(feature);
+    const key = `${group}|${feature.properties.route}|${feature.properties.name}`;
+    if (!routesByKey.has(key)) {
+      routesByKey.set(key, {
+        group,
+        label: feature.properties.label,
+        color: feature.properties.color || "#ff8a1c",
+      });
+    }
+  }
+
+  return [...routesByKey.values()].sort((a, b) => {
+    if (a.group !== b.group) return a.group === "Rail" ? -1 : 1;
+    return a.label.localeCompare(b.label, undefined, { numeric: true });
+  });
+}
+
+function lineFeatureIntersectsViewport(feature, viewportPolygon, visibleBounds) {
+  for (const line of getLineCoordinateSequences(feature.geometry)) {
+    if (line.some(([lng, lat]) => visibleBounds.contains([lat, lng]))) return true;
+  }
+
+  try {
+    return turf.lineIntersect(feature, viewportPolygon).features.length > 0;
+  } catch (error) {
+    return false;
+  }
+}
+
+function renderVisibleRouteGroup(title, routes) {
+  const group = document.createElement("section");
+  group.className = "visible-routes-group";
+
+  const heading = document.createElement("h3");
+  heading.textContent = `${title} (${routes.length.toLocaleString()})`;
+
+  const list = document.createElement("ul");
+  for (const route of routes) {
+    const item = document.createElement("li");
+    item.className = "visible-routes-route";
+    item.style.setProperty("--line-color", route.color);
+
+    const color = document.createElement("span");
+    color.className = "visible-routes-route-color";
+
+    const label = document.createElement("span");
+    label.className = "visible-routes-route-label";
+    label.textContent = route.label;
+    label.title = route.label;
+
+    item.append(color, label);
+    list.appendChild(item);
+  }
+
+  if (!routes.length) {
+    const item = document.createElement("li");
+    item.className = "visible-routes-route";
+    item.style.setProperty("--line-color", "rgb(247 250 252 / 0.24)");
+    const color = document.createElement("span");
+    color.className = "visible-routes-route-color";
+    const label = document.createElement("span");
+    label.className = "visible-routes-route-label";
+    label.textContent = "None visible";
+    item.append(color, label);
+    list.appendChild(item);
+  }
+
+  group.append(heading, list);
+  return group;
 }
 
 // Foreground lifecycle state: geolocation watch runs only while the page is visible.
@@ -818,6 +1124,10 @@ function handlePositionUpdate(position) {
     playerMarker.setLatLng(latLng);
   }
 
+  if (followMeEnabled) {
+    map.panTo(latLng, { animate: true });
+  }
+
   validatePlayerBounds();
 }
 
@@ -832,6 +1142,11 @@ function handlePositionError(error) {
 
 function validatePlayerBounds() {
   if (!lastPlayerPosition || !activeZoneFeature) return;
+  if (!isWarningDateActive()) {
+    elements.warningOverlay.hidden = true;
+    return;
+  }
+
   const inside = turf.booleanPointInPolygon(lastPlayerPosition, activeZoneFeature, {
     ignoreBoundary: false,
   });
@@ -844,13 +1159,29 @@ function validatePlayerBounds() {
   elements.warningOverlay.hidden = warningIgnoredForTesting;
 }
 
+function isWarningDateActive(date = new Date()) {
+  const month = date.getMonth();
+  const day = date.getDate();
+  const afterStart =
+    month > WARNING_START_MONTH_INDEX ||
+    (month === WARNING_START_MONTH_INDEX && day >= WARNING_START_DAY);
+  const beforeEnd =
+    month < WARNING_END_MONTH_INDEX ||
+    (month === WARNING_END_MONTH_INDEX && day <= WARNING_END_DAY);
+  return afterStart && beforeEnd;
+}
+
 // Dynamic shrink math: long-press creates a 1/4-mile circle and intersects it with the uMap polygon.
 function bindLongPress() {
   const container = map.getContainer();
 
   container.addEventListener("pointerdown", (event) => {
     if (event.button !== undefined && event.button !== 0) return;
-    if (event.target.closest("#controls, #controlsToggleButton, #statusPanel, #warningOverlay")) {
+    if (
+      event.target.closest(
+        "#controls, #controlsToggleButton, #zoomControls, #visibleRoutesPanel, #statusPanel, #warningOverlay",
+      )
+    ) {
       return;
     }
 
@@ -1089,14 +1420,20 @@ function getExteriorRings(feature) {
   return [];
 }
 
-function showStatus(message, persistent = false) {
+function showStatus(message, options = {}) {
+  const normalizedOptions = typeof options === "boolean"
+    ? { persistent: options }
+    : options;
+  const persistent = Boolean(normalizedOptions.persistent);
   window.clearTimeout(showStatus.timeoutId);
   showStatus.timeoutId = null;
   elements.statusPanel.textContent = message;
+  elements.statusPanel.classList.toggle("is-error", Boolean(normalizedOptions.error));
   elements.statusPanel.classList.add("is-visible");
   if (!persistent) {
     showStatus.timeoutId = window.setTimeout(() => {
       elements.statusPanel.classList.remove("is-visible");
+      elements.statusPanel.classList.remove("is-error");
       showStatus.timeoutId = null;
     }, 5200);
   }
