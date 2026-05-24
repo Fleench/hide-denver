@@ -64,7 +64,7 @@ body {
 
 #zoneOverlay .transit-line {
   fill: none;
-  stroke: #ff8a1c;
+  stroke: var(--line-color, #ff8a1c);
   stroke-width: 8px;
   stroke-opacity: 0.88;
   stroke-linejoin: round;
@@ -212,17 +212,23 @@ body {
 }
 
 .controls-toggle {
-  display: none;
+  position: fixed;
+  z-index: 1501;
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  display: block;
+  width: 132px;
+  height: 48px;
 }
 
 #controls {
-  position: absolute;
+  position: fixed;
   z-index: 1500;
-  top: max(12px, env(safe-area-inset-top));
+  top: calc(max(12px, env(safe-area-inset-top)) + 60px);
   left: max(12px, env(safe-area-inset-left));
   right: max(12px, env(safe-area-inset-right));
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, auto));
+  grid-template-columns: repeat(auto-fit, 132px);
   align-items: stretch;
   justify-content: end;
   gap: 8px;
@@ -230,8 +236,25 @@ body {
   pointer-events: auto;
 }
 
+.controls-collapsed #controls {
+  display: none;
+}
+
+#zoomControls {
+  position: fixed;
+  z-index: 1500;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  left: max(12px, env(safe-area-inset-left));
+  display: grid;
+  grid-template-columns: repeat(2, 52px);
+  gap: 8px;
+  pointer-events: auto;
+}
+
 button {
-  min-height: 42px;
+  width: 132px;
+  height: 48px;
+  min-height: 48px;
   padding: 0 14px;
   border: 1px solid rgb(255 255 255 / 0.18);
   border-radius: 8px;
@@ -240,7 +263,140 @@ button {
   font: inherit;
   font-weight: 700;
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.28);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#zoomControls button {
+  width: 52px;
+  height: 52px;
+  min-height: 52px;
+  padding: 0;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.visible-routes-panel {
+  position: fixed;
+  z-index: 1450;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: min(48vh, 380px);
+  padding: 0 max(12px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  border-top: 1px solid rgb(255 255 255 / 0.16);
+  background: rgb(12 18 23 / 0.94);
+  box-shadow: 0 -18px 48px rgb(0 0 0 / 0.36);
+  transform: translateY(100%);
+  transition: transform 180ms ease;
+  pointer-events: auto;
+}
+
+.visible-routes-panel.is-open {
+  transform: translateY(0);
+}
+
+.visible-routes-toggle {
+  position: absolute;
+  right: max(12px, env(safe-area-inset-right));
+  top: -48px;
+  width: 132px;
+  height: 48px;
+  min-height: 48px;
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.visible-routes-content {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  padding-top: 14px;
+}
+
+.visible-routes-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.12);
+}
+
+.visible-routes-header h2 {
+  margin: 0;
+  color: #f7fafc;
+  font-size: 19px;
+  line-height: 1.1;
+}
+
+#visibleRoutesSummary {
+  flex: 0 0 auto;
+  color: rgb(247 250 252 / 0.7);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.visible-routes-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  min-height: 0;
+  padding: 12px 0 0;
+  overflow: auto;
+}
+
+.visible-routes-group h3 {
+  margin: 0 0 8px;
+  color: #f6d047;
+  font-size: 14px;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.visible-routes-group ul {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.visible-routes-route {
+  display: grid;
+  grid-template-columns: 5px minmax(0, 1fr);
+  align-items: stretch;
+  min-height: 34px;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.06);
+}
+
+.visible-routes-route-color {
+  background: var(--line-color, #ff8a1c);
+}
+
+.visible-routes-route-label {
+  min-width: 0;
+  padding: 8px 10px;
+  overflow: hidden;
+  color: rgb(247 250 252 / 0.92);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visible-routes-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: rgb(247 250 252 / 0.72);
+  font-size: 14px;
+  line-height: 1.35;
 }
 
 button:active {
@@ -249,6 +405,11 @@ button:active {
 
 button:disabled {
   opacity: 0.55;
+}
+
+button[aria-pressed="true"] {
+  border-color: rgb(0 240 255 / 0.64);
+  background: rgb(0 118 135 / 0.9);
 }
 
 #statusPanel {
@@ -268,6 +429,11 @@ button:disabled {
   font-size: 14px;
   line-height: 1.35;
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.28);
+}
+
+#statusPanel.is-error {
+  border: 1px solid rgb(255 255 255 / 0.26);
+  background: rgb(127 29 29 / 0.94);
 }
 
 #statusPanel.is-visible {
@@ -643,14 +809,6 @@ button:disabled {
 }
 
 @media (max-width: 620px) {
-  .controls-toggle {
-    position: absolute;
-    z-index: 1501;
-    top: max(12px, env(safe-area-inset-top));
-    right: max(12px, env(safe-area-inset-right));
-    display: block;
-  }
-
   .controls-toggle.is-collapsed {
     background: rgb(0 240 255 / 0.9);
     color: #071015;
@@ -658,18 +816,21 @@ button:disabled {
 
   #controls {
     top: calc(max(12px, env(safe-area-inset-top)) + 52px);
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .controls-collapsed #controls {
-    display: none;
+    grid-template-columns: repeat(2, 132px);
   }
 
   #controls button {
-    width: 100%;
-    min-width: 0;
     padding: 0 10px;
     font-size: 13px;
+  }
+
+  .visible-routes-panel {
+    height: min(54vh, 420px);
+  }
+
+  .visible-routes-list {
+    grid-template-columns: 1fr;
+    gap: 14px;
   }
 
   .rules-header {
