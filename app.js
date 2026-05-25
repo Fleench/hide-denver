@@ -40,6 +40,7 @@ const elements = {
   transitToggleButton: document.querySelector("#transitToggleButton"),
   lineNamesToggleButton: document.querySelector("#lineNamesToggleButton"),
   resetButton: document.querySelector("#resetButton"),
+  deductionButton: document.querySelector("#deductionButton"),
   statusButton: document.querySelector("#statusButton"),
   rulesButton: document.querySelector("#rulesButton"),
   testingIgnoreButton: document.querySelector("#testingIgnoreButton"),
@@ -889,6 +890,9 @@ function bindControls() {
   elements.transitToggleButton.addEventListener("click", toggleTransitLayer);
   elements.lineNamesToggleButton.addEventListener("click", toggleLineNames);
   elements.resetButton.addEventListener("click", resetMap);
+  elements.deductionButton.addEventListener("click", () => {
+    window.location.href = "deduction.html";
+  });
   elements.statusButton.addEventListener("click", () => {
     window.location.href = "status.html";
   });

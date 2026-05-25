@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#101418" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Deduction Board" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Deduction Board</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icons/icon.svg" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIINfQWQf1zsFBi7pLPpU+0XYr1ZohA2B0s="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="deduction-page">
+    <main id="deductionApp">
+      <div id="deductionMap" aria-label="Deduction map"></div>
+
+      <section class="deduction-toolbar" aria-label="Deduction controls">
+        <button id="deductionBackButton" type="button">Map</button>
+        <button id="deductionFitButton" type="button">Fit Area</button>
+        <button id="deductionGpsButton" type="button" aria-pressed="false">GPS</button>
+        <button id="deductionResetButton" type="button">Reset Board</button>
+      </section>
+
+      <aside class="deduction-panel" aria-label="Deduction board">
+        <header>
+          <h1>Deduction Board</h1>
+          <p>Track physical question answers and narrow the possible search area.</p>
+        </header>
+
+        <section class="deduction-card">
+          <h2>Map Constraint</h2>
+          <label>
+            Question Type
+            <select id="constraintType">
+              <option value="radar">Radar radius</option>
+              <option value="measuring">Measuring from place</option>
+              <option value="thermometer">Thermometer path</option>
+              <option value="nearest">Nearest place</option>
+              <option value="tentacle">Tentacle</option>
+              <option value="manual">Manual area</option>
+            </select>
+          </label>
+          <label>
+            Answer Effect
+            <select id="constraintEffect">
+              <option value="eliminate">Eliminate this area</option>
+              <option value="keep">Keep only this area</option>
+            </select>
+          </label>
+          <label class="radius-field">
+            Radius in miles
+            <input id="constraintRadius" type="number" min="0.1" max="100" step="0.1" value="10" inputmode="decimal" />
+          </label>
+          <label>
+            Note
+            <input id="constraintNote" type="text" maxlength="80" placeholder="Example: No, not within 10 mi" />
+          </label>
+          <div class="deduction-actions">
+            <button id="useMapCenterButton" type="button">Use Center</button>
+            <button id="useGpsButton" type="button" disabled>Use GPS</button>
+            <button id="pickPointButton" type="button">Pick Point</button>
+            <button id="pickSecondPointButton" type="button">Pick End</button>
+            <button id="startAreaButton" type="button">Draw Area</button>
+            <button id="finishAreaButton" type="button" disabled>Finish</button>
+          </div>
+          <p id="constraintHelp" class="deduction-hint"></p>
+        </section>
+
+        <section class="deduction-card">
+          <h2>Nearest Places</h2>
+          <label>
+            Place Name
+            <input id="poiName" type="text" maxlength="60" placeholder="Example: DEN Airport" />
+          </label>
+          <label>
+            Place Type
+            <select id="poiKind">
+              <option value="airport">Airport</option>
+              <option value="park">Park</option>
+              <option value="museum">Museum</option>
+              <option value="hospital">Hospital</option>
+              <option value="library">Library</option>
+              <option value="custom">Custom</option>
+            </select>
+          </label>
+          <div class="deduction-actions">
+            <button id="addPoiButton" type="button">Add Place</button>
+            <button id="applyNearestButton" type="button">Apply Nearest</button>
+          </div>
+          <p class="deduction-hint">Add all relevant places inside the mission map before applying a nearest-place result.</p>
+        </section>
+
+        <section class="deduction-card deduction-list-card">
+          <h2>Evidence</h2>
+          <ol id="constraintList" class="deduction-list"></ol>
+        </section>
+
+        <section class="deduction-card deduction-list-card">
+          <h2>Places</h2>
+          <ol id="poiList" class="deduction-list"></ol>
+        </section>
+      </aside>
+
+      <section id="deductionStatus" role="status" aria-live="polite">
+        Loading deduction board...
+      </section>
+    </main>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
+    <script src="pwa.js"></script>
+    <script src="deduction.js"></script>
+  </body>
+</html>

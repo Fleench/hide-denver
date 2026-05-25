@@ -461,6 +461,216 @@ button[aria-pressed="true"] {
   display: none;
 }
 
+.deduction-page,
+#deductionApp,
+#deductionMap {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+#deductionApp {
+  position: relative;
+  background: #101418;
+}
+
+#deductionMap {
+  z-index: 0;
+  background: #1c252d;
+}
+
+.deduction-toolbar {
+  position: fixed;
+  z-index: 1500;
+  top: max(12px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.deduction-panel {
+  position: fixed;
+  z-index: 1450;
+  top: calc(max(12px, env(safe-area-inset-top)) + 62px);
+  right: max(12px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-rows: auto auto auto minmax(120px, 1fr) minmax(96px, 0.7fr);
+  gap: 10px;
+  width: min(390px, calc(100vw - 24px));
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 8px;
+  background: rgb(12 18 23 / 0.92);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 0.36);
+}
+
+.deduction-panel header h1 {
+  margin: 0;
+  color: #f7fafc;
+  font-size: 24px;
+  line-height: 1.05;
+}
+
+.deduction-panel header p,
+.deduction-hint {
+  margin: 6px 0 0;
+  color: rgb(247 250 252 / 0.68);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.deduction-card {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.06);
+}
+
+.deduction-card h2 {
+  margin: 0;
+  color: #f6d047;
+  font-size: 15px;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.deduction-card label {
+  display: grid;
+  gap: 5px;
+  color: rgb(247 250 252 / 0.72);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.deduction-card input,
+.deduction-card select {
+  width: 100%;
+  height: 40px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 8px;
+  background: rgb(5 10 14 / 0.86);
+  color: #f7fafc;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.deduction-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.deduction-actions button,
+.deduction-list-item button {
+  width: 100%;
+  height: 40px;
+  min-height: 40px;
+  padding: 0 9px;
+  font-size: 13px;
+}
+
+.deduction-list-card {
+  min-height: 0;
+}
+
+.deduction-list {
+  display: grid;
+  gap: 7px;
+  min-height: 0;
+  max-height: 210px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.deduction-list-item,
+.deduction-empty {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  padding: 9px;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 8px;
+  background: rgb(12 18 23 / 0.72);
+}
+
+.deduction-list-item strong,
+.deduction-list-item span {
+  grid-column: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deduction-list-item strong {
+  color: #f7fafc;
+  font-size: 13px;
+}
+
+.deduction-list-item span,
+.deduction-empty {
+  color: rgb(247 250 252 / 0.66);
+  font-size: 12px;
+}
+
+.deduction-list-item button {
+  grid-column: 2;
+  width: 78px;
+}
+
+.deduction-list-item.is-keep {
+  border-color: rgb(101 212 110 / 0.42);
+}
+
+.deduction-list-item.is-eliminate {
+  border-color: rgb(255 90 95 / 0.46);
+}
+
+.deduction-list-item.is-selected {
+  border-color: rgb(0 240 255 / 0.58);
+  background: rgb(0 118 135 / 0.34);
+}
+
+#deductionStatus {
+  position: fixed;
+  z-index: 1600;
+  left: max(12px, env(safe-area-inset-left));
+  right: max(12px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
+  display: none;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 11px 14px;
+  border-radius: 8px;
+  background: rgb(12 18 23 / 0.9);
+  color: #f7fafc;
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.35;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.28);
+}
+
+#deductionStatus.is-error {
+  border: 1px solid rgb(255 255 255 / 0.26);
+  background: rgb(127 29 29 / 0.94);
+}
+
+#deductionStatus.is-visible {
+  display: block;
+}
+
 #testingIgnoreButton {
   justify-self: center;
   max-width: min(520px, 92vw);
@@ -844,5 +1054,29 @@ button[aria-pressed="true"] {
 
   .status-line-list {
     grid-template-columns: 1fr;
+  }
+
+  .deduction-toolbar {
+    right: max(12px, env(safe-area-inset-right));
+  }
+
+  .deduction-toolbar button {
+    width: calc((100vw - 48px) / 4);
+    padding: 0 8px;
+    font-size: 13px;
+  }
+
+  .deduction-panel {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 56vh;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-bottom-right-radius: 0;
+    border-bottom-left-radius: 0;
   }
 }

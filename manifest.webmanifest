@@ -26,6 +26,11 @@
       "name": "Status",
       "short_name": "Status",
       "url": "status.html"
+    },
+    {
+      "name": "Deduction Board",
+      "short_name": "Deduction",
+      "url": "deduction.html"
     }
   ]
 }
