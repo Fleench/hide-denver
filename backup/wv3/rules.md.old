@@ -1,0 +1,62 @@
+# How the App Works
+
+## Mission Area
+Stay inside the clear active polygon shown on the map. The area outside the active polygon is heavily dimmed and is out of bounds.
+
+## Out-of-Bounds Warning
+If your live position leaves the active mission area, the app shows a full-screen warning. Return to the mission area immediately.
+
+## Testing Override
+During local testing only, the warning may be dismissed with **I am testing the app ignore this message**. This does not change the mission boundary.
+
+## Pin Shrink
+Touch-and-hold or mouse-hold on the map to drop a pin. The app creates a 1/4-mile radius around that pin and intersects it with the original mission polygon.
+
+## Saved Pin
+The active pin is saved in this browser. Reloading the page restores the saved pin and shrunken mission area.
+
+## Reset Map
+Use **Reset Map** to clear the saved pin and return the map to the original mission boundary.
+
+## Location Tracking
+The app uses browser geolocation while the page is visible. Tracking pauses when the page is hidden or closed.
+
+# Custom Rules
+
+## Teams & Player Setup
+* **The Teams:** Two teams face off head-to-head in a 2-round game, played as a 2v3 setup.
+
+## Map & Boundaries
+* **The Rail Network:** All RTD Light Rail lines (D, E, H, L, R, W) and Commuter Rail lines (B, G, N) are fully active.
+* **The Bus Network:** To prevent massive dead zones in central Denver, players may use the curated high-frequency bus and BRT routes listed below.
+* **East-West Spines:** Routes 15, 15L, 3, 6, 10, 20, 32, 38, and 43.
+* **North-South Cross-Towns:** Routes 0, 0L, 31, 40, 51, 24, 73, 76, and 105.
+* **Key Connections & Shuttles:** 16th Street FreeRide (FREE), Free MetroRide (FMR), 83D/83L, 120X, and Flatiron Flyer (FF1).
+* **Out of Bounds:** The A-Line to the airport is strictly banned due to its premium pricing. Any local neighborhood bus route not listed above is strictly banned.
+
+## Tracking & Technology
+* **Seekers:** Seekers must activate native Google Maps Location Sharing ("Until you turn this off") and share it with the hiders.
+* **Hiders:** Hiders remain completely invisible on the map. They use the seekers' live feeds to actively dodge them.
+* **Questions:** Seekers must rely entirely on deductions made from asking questions from the card deck.
+* **Custom Site:** Players use this custom site strictly as a boundary calculator and digital rulebook. Hiders can drop a pin to render their exact hiding boundary around an approved rail station or approved bus stop.
+
+## Timing & Hiding Zones
+* **Hiding Window:** The hider gets exactly **75 minutes** to flee and lock in their location.
+* **Hunt Cap:** There is a **4-hour hard cap** on the hunt. If the seekers do not catch the hiders within 4 hours, the round automatically ends and the hiders receive max survival time plus any unplayed time-bonus cards.
+* **Hiding Zone Radius:** The hider's zone is a **1/4-mile radius** centered on the platform of their chosen final rail station or their final approved bus stop from the list above. Players use the custom app to track and verify this boundary.
+* **Win Condition:** The team with the longest survival time on the clock wins the game.
+* **Flexible Dining:** The game uses an "Eat When You Want" rule. Lunches are packed in daypacks so players can eat while riding or hiding without stopping the game clock.
+
+## Game Day Timeline Flow
+* **Kickoff:** The game starts at Denver Union Station. Roles are decided by casting lots, trackers are turned on, and Team 1 flees to start their 75-minute clock.
+* **The Switch:** The exact second Team 1 is tagged or hits the 4-hour cap, the game pauses and all players meet at the capture station platform or stop. Decks are reset, and Team 2 immediately triggers their 75-minute clock to flee directly from that new station. Teams do not commute back to Union Station.
+
+## Card Deck Native Translations
+* **"Express / Regional Trains"** = Commuter Rail lines (B, G, N) and BRT lines (15L, FF1, 120X).
+* **"Local / Urban Trains"** = Light Rail lines and local bus routes.
+* **"Fare Gates" / "Tapping Out"** = Stepping off the immediate physical train platform or bus stop area onto a public sidewalk, street, or parking lot.
+* **"Line Transfers"** = Switching transit at any station or stop, provided you hop off one line and onto a completely different line.
+* **"Stops Away"** = Count the stations or stops exactly as they appear sequentially on the active route you are riding.
+
+## Custom Cards
+* **Pre-Game Saints Cards:** The custom Saint-labeled cards are listed directly in the app, which details exactly what they are and how they function when drawn.

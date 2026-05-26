@@ -1,0 +1,1555 @@
+"use strict";
+
+const MAP_URL = "assets/Map.json";
+const LINES_URL = "assets/Lines.json";
+const STOPS_URL = "assets/Stops.json";
+const BUS_ROUTES_URL = "assets/BusRoutes.geojson";
+const BUS_STOPS_URL = "assets/BusStops_Active.geojson";
+const RAIL_LINES_URL = "assets/LightrailLines_Offset.geojson";
+const RAIL_STATIONS_URL = "assets/LightrailStations.geojson";
+const SHRINK_RADIUS_MILES = 0.25;
+const STORED_PIN_KEY = "hideDenver.activePin";
+const TRANSIT_VISIBLE_KEY = "hideDenver.linesStopsVisible";
+const LINE_NAMES_VISIBLE_KEY = "hideDenver.lineNamesVisible";
+const WARNING_START_MONTH_INDEX = 4;
+const WARNING_START_DAY = 28;
+const WARNING_END_MONTH_INDEX = 5;
+const WARNING_END_DAY = 2;
+const ROUTE_TYPE_COLORS = {
+  LOC: ["#e11d48", "#0ea5e9", "#f59e0b"],
+  REG: ["#2563eb", "#dc2626", "#65a30d"],
+  CNR: ["#7c3aed", "#0891b2", "#ea580c"],
+  SKY: ["#0284c7", "#be123c", "#16a34a"],
+  LRT: ["#16a34a", "#9333ea", "#f97316"],
+  OFF: ["#06b6d4", "#f43f5e", "#84cc16"],
+  UNKNOWN: ["#ff8a1c", "#00f0ff", "#f6d047"],
+};
+
+const elements = {
+  map: document.querySelector("#map"),
+  zoneOverlay: document.querySelector("#zoneOverlay"),
+  centerButton: document.querySelector("#centerButton"),
+  controlsToggleButton: document.querySelector("#controlsToggleButton"),
+  zoomInButton: document.querySelector("#zoomInButton"),
+  zoomOutButton: document.querySelector("#zoomOutButton"),
+  visibleRoutesPanel: document.querySelector("#visibleRoutesPanel"),
+  visibleRoutesToggleButton: document.querySelector("#visibleRoutesToggleButton"),
+  visibleRoutesSummary: document.querySelector("#visibleRoutesSummary"),
+  visibleRoutesList: document.querySelector("#visibleRoutesList"),
+  transitToggleButton: document.querySelector("#transitToggleButton"),
+  lineNamesToggleButton: document.querySelector("#lineNamesToggleButton"),
+  resetButton: document.querySelector("#resetButton"),
+  pagesMenuButton: document.querySelector("#pagesMenuButton"),
+  pagesMenu: document.querySelector("#pagesMenu"),
+  statusButton: document.querySelector("#statusButton"),
+  rulesButton: document.querySelector("#rulesButton"),
+  testingIgnoreButton: document.querySelector("#testingIgnoreButton"),
+  statusPanel: document.querySelector("#statusPanel"),
+  warningOverlay: document.querySelector("#warningOverlay"),
+};
+
+let map;
+let originalZoneFeature;
+let activeZoneFeature;
+let originalBoundaryLayer;
+let activeBoundaryLayer;
+let transitFeatureCollection = null;
+let transitVisible = safeGetStorageItem(TRANSIT_VISIBLE_KEY) !== "false";
+let lineNamesVisible = safeGetStorageItem(LINE_NAMES_VISIBLE_KEY) === "true";
+let autoFollowEnabled = false;
+let visibleRoutesPanelOpen = false;
+let namedStops = [];
+let droppedPinLatLng = null;
+let radiusFeature = null;
+let playerMarker;
+let pinMarker;
+let radiusLayer;
+let watchId = null;
+let lastPlayerPosition = null;
+let overlayUpdateFrame = null;
+let touchMapInteractionActive = false;
+let activeTouchPointers = 0;
+const activeTouchPointerIds = new Set();
+let longPressTimer = null;
+let longPressPoint = null;
+let longPressStartClient = null;
+let routesSwipeStart = null;
+let routesSwipeHandled = false;
+let warningIgnoredForTesting = false;
+let tileErrorShown = false;
+
+bootstrap();
+
+async function bootstrap() {
+  try {
+    bindConnectivityEvents();
+    showStatus("Loading mission area...", { persistent: true });
+    const zoneFeature = await loadPrimaryPolygon();
+    originalZoneFeature = zoneFeature;
+    activeZoneFeature = originalZoneFeature;
+
+    createMap();
+    renderMissionLayers();
+    bindControls();
+    bindLongPress();
+    bindRoutesSwipe();
+    fitToActiveZone();
+
+    let transitUnavailable = false;
+    try {
+      showStatus("Loading transit lines and stops...", { persistent: true });
+      const linesStopsFeatureCollection = await loadLinesAndStops();
+      renderLinesAndStops(linesStopsFeatureCollection);
+    } catch (error) {
+      console.error("Transit overlays unavailable.", error);
+      transitUnavailable = true;
+      namedStops = [];
+      renderLinesAndStops({ type: "FeatureCollection", features: [] });
+      showStatus("Transit overlays unavailable. Map and geofence still work.", {
+        persistent: true,
+        error: true,
+      });
+    }
+
+    const restoredPin = restoreStoredPin();
+    startForegroundTracking();
+    if (!restoredPin) {
+      const message = transitUnavailable
+        ? "Transit overlays unavailable. Long-press the map to shrink the mission area to a 1/4-mile radius."
+        : "Long-press the map to shrink the mission area to a 1/4-mile radius.";
+      showStatus(message, { persistent: transitUnavailable, error: transitUnavailable });
+    }
+  } catch (error) {
+    showStatus(error.message || String(error), { persistent: true, error: true });
+  }
+}
+
+function safeGetStorageItem(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch (error) {
+    return null;
+  }
+}
+
+function safeSetStorageItem(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch (error) {
+    // Storage can be unavailable in private or restricted browser contexts.
+  }
+}
+
+function safeRemoveStorageItem(key) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch (error) {
+    // Storage can be unavailable in private or restricted browser contexts.
+  }
+}
+
+// GeoJSON loading: read the local map export and extract the largest Polygon/MultiPolygon.
+async function loadPrimaryPolygon() {
+  const response = await fetch(MAP_URL, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Could not load ${MAP_URL}. Start the local server from the website folder.`);
+  }
+
+  const geojson = await response.json();
+  const polygons = collectPolygonFeatures(geojson);
+
+  if (!polygons.length) {
+    throw new Error("No Polygon or MultiPolygon geometry was found in assets/Map.json.");
+  }
+
+  polygons.sort((a, b) => turf.area(b) - turf.area(a));
+  return turf.cleanCoords(polygons[0]);
+}
+
+function collectPolygonFeatures(geojson) {
+  if (!geojson) return [];
+
+  if (geojson.type === "FeatureCollection") {
+    return geojson.features.flatMap(collectPolygonFeatures);
+  }
+
+  if (geojson.type === "Feature") {
+    return collectPolygonFeatures(geojson.geometry).map((feature) => ({
+      ...feature,
+      properties: geojson.properties || {},
+    }));
+  }
+
+  if (geojson.type === "GeometryCollection") {
+    return geojson.geometries.flatMap(collectPolygonFeatures);
+  }
+
+  if (geojson.type === "Polygon" || geojson.type === "MultiPolygon") {
+    return [
+      {
+        type: "Feature",
+        properties: {},
+        geometry: geojson,
+      },
+    ];
+  }
+
+  return [];
+}
+
+async function loadLinesAndStops() {
+  const [
+    linesResponse,
+    stopsResponse,
+    busRoutesResponse,
+    busStopsResponse,
+    railLinesResponse,
+    railStationsResponse,
+  ] = await Promise.all([
+    fetch(LINES_URL, { cache: "no-store" }),
+    fetch(STOPS_URL, { cache: "no-store" }),
+    fetch(BUS_ROUTES_URL, { cache: "no-store" }),
+    fetch(BUS_STOPS_URL, { cache: "no-store" }),
+    fetch(RAIL_LINES_URL, { cache: "no-store" }),
+    fetch(RAIL_STATIONS_URL, { cache: "no-store" }),
+  ]);
+
+  if (!linesResponse.ok) {
+    throw new Error(`Could not load ${LINES_URL}.`);
+  }
+  if (!stopsResponse.ok) {
+    throw new Error(`Could not load ${STOPS_URL}.`);
+  }
+  if (!busRoutesResponse.ok) throw new Error(`Could not load ${BUS_ROUTES_URL}.`);
+  if (!busStopsResponse.ok) throw new Error(`Could not load ${BUS_STOPS_URL}.`);
+  if (!railLinesResponse.ok) throw new Error(`Could not load ${RAIL_LINES_URL}.`);
+  if (!railStationsResponse.ok) throw new Error(`Could not load ${RAIL_STATIONS_URL}.`);
+
+  const [
+    linesGeojson,
+    stopsGeojson,
+    busRoutesGeojson,
+    busStopsGeojson,
+    railLinesGeojson,
+    railStationsGeojson,
+  ] = await Promise.all([
+    linesResponse.json(),
+    stopsResponse.json(),
+    busRoutesResponse.json(),
+    busStopsResponse.json(),
+    railLinesResponse.json(),
+    railStationsResponse.json(),
+  ]);
+  const routeMetadata = buildRouteMetadata([busRoutesGeojson, railLinesGeojson]);
+  const stopMetadata = buildStopMetadata([busStopsGeojson, railStationsGeojson]);
+  namedStops = buildNamedFilteredStops(stopsGeojson, stopMetadata);
+  const lineFeatures = geometryCollectionToFeatures(linesGeojson, { layer: "line" }).map((feature) => ({
+    ...feature,
+    properties: {
+      ...feature.properties,
+      ...(routeMetadata.get(geometrySignature(feature.geometry)) || {}),
+    },
+  }));
+  assignTransitLineColors(lineFeatures);
+
+  return {
+    type: "FeatureCollection",
+    features: [
+      ...lineFeatures,
+      ...geometryCollectionToFeatures(stopsGeojson, { layer: "stop" }),
+    ],
+  };
+}
+
+function buildRouteMetadata(routeGeojsons) {
+  const metadata = new Map();
+  for (const source of routeGeojsons) {
+    for (const feature of collectFeatures(source)) {
+      if (!isLineGeometry(feature.geometry)) continue;
+      const route = String(feature.properties?.ROUTE || "").trim();
+      const name = String(feature.properties?.NAME || "").trim();
+      metadata.set(geometrySignature(feature.geometry), {
+        route,
+        name,
+        type: String(feature.properties?.TYPE || "UNKNOWN").trim() || "UNKNOWN",
+        service: String(feature.properties?.SERVICE || "").trim(),
+        label: formatLineLabel(route, name),
+      });
+    }
+  }
+  return metadata;
+}
+
+function assignTransitLineColors(lineFeatures) {
+  const lineGroups = groupByRouteType(lineFeatures);
+
+  for (const [routeType, features] of lineGroups) {
+    const palette = ROUTE_TYPE_COLORS[routeType] || ROUTE_TYPE_COLORS.UNKNOWN;
+    const conflicts = buildLineConflictGraph(features);
+    const orderedFeatures = [...features].sort(
+      (a, b) => conflicts.get(b).size - conflicts.get(a).size,
+    );
+
+    for (const feature of orderedFeatures) {
+      const neighborColors = new Set(
+        [...conflicts.get(feature)]
+          .map((neighbor) => neighbor.properties?.color)
+          .filter(Boolean),
+      );
+      const color = palette.find((candidate) => !neighborColors.has(candidate))
+        || chooseLeastConflictingColor(palette, conflicts.get(feature));
+      feature.properties.color = color;
+    }
+  }
+}
+
+function groupByRouteType(lineFeatures) {
+  const groups = new Map();
+  for (const feature of lineFeatures) {
+    const routeType = getRouteType(feature);
+    if (!groups.has(routeType)) groups.set(routeType, []);
+    groups.get(routeType).push(feature);
+  }
+  return groups;
+}
+
+function getRouteType(feature) {
+  return String(feature.properties?.type || "UNKNOWN").trim().toUpperCase() || "UNKNOWN";
+}
+
+function buildLineConflictGraph(features) {
+  const conflicts = new Map(features.map((feature) => [feature, new Set()]));
+  const segmentSignatures = new Map(
+    features.map((feature) => [feature, getLineSegmentSignatures(feature.geometry)]),
+  );
+
+  for (let i = 0; i < features.length; i += 1) {
+    for (let j = i + 1; j < features.length; j += 1) {
+      if (
+        linesHavePointIntersection(features[i], features[j]) &&
+        !lineSegmentSetsOverlap(segmentSignatures.get(features[i]), segmentSignatures.get(features[j]))
+      ) {
+        conflicts.get(features[i]).add(features[j]);
+        conflicts.get(features[j]).add(features[i]);
+      }
+    }
+  }
+
+  return conflicts;
+}
+
+function linesHavePointIntersection(firstFeature, secondFeature) {
+  try {
+    return turf.lineIntersect(firstFeature, secondFeature).features.length > 0;
+  } catch (error) {
+    return false;
+  }
+}
+
+function getLineSegmentSignatures(geometry) {
+  const signatures = new Set();
+  for (const line of getLineCoordinateSequences(geometry)) {
+    for (let index = 1; index < line.length; index += 1) {
+      const start = coordinateColorSignature(line[index - 1]);
+      const end = coordinateColorSignature(line[index]);
+      signatures.add(start < end ? `${start}|${end}` : `${end}|${start}`);
+    }
+  }
+  return signatures;
+}
+
+function coordinateColorSignature([lng, lat]) {
+  return `${Number(lng).toFixed(5)},${Number(lat).toFixed(5)}`;
+}
+
+function lineSegmentSetsOverlap(firstSegments, secondSegments) {
+  for (const segment of firstSegments) {
+    if (secondSegments.has(segment)) return true;
+  }
+  return false;
+}
+
+function chooseLeastConflictingColor(palette, neighbors) {
+  return palette
+    .map((color) => ({
+      color,
+      conflicts: [...neighbors].filter((neighbor) => neighbor.properties?.color === color).length,
+    }))
+    .sort((a, b) => a.conflicts - b.conflicts)[0].color;
+}
+
+function buildStopMetadata(stopGeojsons) {
+  const metadata = new Map();
+  for (const source of stopGeojsons) {
+    for (const feature of collectFeatures(source)) {
+      if (feature.geometry?.type !== "Point") continue;
+      const [lng, lat] = feature.geometry.coordinates;
+      const name = String(feature.properties?.STOPNAME || feature.properties?.NAME || "").trim();
+      if (!name) continue;
+      metadata.set(coordinateSignature(lng, lat), { name, lat, lng });
+    }
+  }
+  return metadata;
+}
+
+function buildNamedFilteredStops(stopsGeojson, stopMetadata) {
+  const stops = [];
+  const metadataStops = [...stopMetadata.values()];
+  for (const geometry of collectGeometries(stopsGeojson)) {
+    if (geometry.type !== "Point") continue;
+    const [lng, lat] = geometry.coordinates;
+    const exactMetadata = stopMetadata.get(coordinateSignature(lng, lat));
+    if (exactMetadata) {
+      stops.push(exactMetadata);
+      continue;
+    }
+
+    const nearestMetadata = findNearestMetadataStop(lat, lng, metadataStops);
+    if (nearestMetadata) stops.push(nearestMetadata);
+  }
+  return stops;
+}
+
+function findNearestMetadataStop(lat, lng, metadataStops) {
+  if (!metadataStops.length) return null;
+
+  const point = turf.point([lng, lat]);
+  let bestMatch = null;
+  let bestDistance = Infinity;
+
+  for (const stop of metadataStops) {
+    const distance = turf.distance(
+      point,
+      turf.point([stop.lng, stop.lat]),
+      { units: "miles" },
+    );
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestMatch = stop;
+    }
+  }
+
+  if (bestDistance > 0.03) return null;
+  return bestMatch;
+}
+
+function geometryCollectionToFeatures(geojson, properties = {}) {
+  if (geojson.type === "FeatureCollection") {
+    return geojson.features.map((feature) => ({
+      ...feature,
+      properties: {
+        ...properties,
+        ...(feature.properties || {}),
+      },
+    }));
+  }
+
+  if (geojson.type === "Feature") {
+    return [
+      {
+        ...geojson,
+        properties: {
+          ...properties,
+          ...(geojson.properties || {}),
+        },
+      },
+    ];
+  }
+
+  if (geojson.type === "GeometryCollection") {
+    return geojson.geometries.map((geometry) => ({
+      type: "Feature",
+      properties,
+      geometry,
+    }));
+  }
+
+  return [
+    {
+      type: "Feature",
+      properties,
+      geometry: geojson,
+    },
+  ];
+}
+
+// Map settings: a clean streets-first basemap plus a bright polygon for the valid mission area.
+function createMap() {
+  const center = turf.center(originalZoneFeature).geometry.coordinates;
+
+  map = L.map(elements.map, {
+    center: [center[1], center[0]],
+    zoom: 12,
+    zoomSnap: 0.25,
+    zoomDelta: 0.25,
+    wheelPxPerZoomLevel: 80,
+    zoomControl: false,
+    preferCanvas: true,
+  });
+
+  const tileLayer = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+    subdomains: "abcd",
+    tileSize: 256,
+    zoomOffset: 0,
+    maxZoom: 19,
+    detectRetina: true,
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  }).addTo(map);
+  tileLayer.on("tileerror", () => {
+    if (tileErrorShown) return;
+    tileErrorShown = true;
+    showStatus("Map tiles are not loading. Check connection; cached data may still work.", {
+      persistent: true,
+      error: true,
+    });
+  });
+
+  map.on("movestart zoomstart", beginTouchMapInteraction);
+  map.on("moveend zoomend", endTouchMapInteraction);
+  map.on("moveend zoomend resize", updateVisibleRoutesPanel);
+  map.on("move zoom zoomend viewreset resize", scheduleZoneOverlayUpdate);
+  map.on("dragstart zoomstart", disableAutoFollowFromMapInteraction);
+
+  requestAnimationFrame(() => {
+    map.invalidateSize();
+    fitToActiveZone();
+    scheduleZoneOverlayUpdate();
+  });
+}
+
+function renderMissionLayers() {
+  if (originalBoundaryLayer) originalBoundaryLayer.remove();
+  if (activeBoundaryLayer) activeBoundaryLayer.remove();
+
+  originalBoundaryLayer = L.geoJSON(originalZoneFeature, {
+    interactive: false,
+    pane: "overlayPane",
+    style: {
+      color: "#f6d047",
+      dashArray: activeZoneFeature === originalZoneFeature ? null : "8 8",
+      lineCap: "round",
+      lineJoin: "round",
+      weight: activeZoneFeature === originalZoneFeature ? 5 : 3,
+      opacity: activeZoneFeature === originalZoneFeature ? 1 : 0.85,
+      fillOpacity: 0,
+    },
+  }).addTo(map);
+
+  activeBoundaryLayer = L.geoJSON(activeZoneFeature, {
+    interactive: false,
+    pane: "overlayPane",
+    style: {
+      color: "#00f0ff",
+      lineCap: "round",
+      lineJoin: "round",
+      weight: 5,
+      opacity: 1,
+      fillOpacity: 0,
+    },
+  }).addTo(map);
+
+  activeBoundaryLayer.bringToFront();
+  scheduleZoneOverlayUpdate();
+}
+
+function renderLinesAndStops(featureCollection) {
+  transitFeatureCollection = featureCollection;
+  updateTransitToggleButton();
+  updateLineNamesToggleButton();
+  updateVisibleRoutesPanel();
+  scheduleZoneOverlayUpdate();
+}
+
+function toggleTransitLayer() {
+  transitVisible = !transitVisible;
+  safeSetStorageItem(TRANSIT_VISIBLE_KEY, String(transitVisible));
+  renderLinesAndStops(transitFeatureCollection);
+}
+
+function updateTransitToggleButton() {
+  const label = transitVisible
+    ? "Hide Lines/Stops"
+    : "Show Lines/Stops";
+  elements.transitToggleButton.setAttribute("aria-label", label);
+  elements.transitToggleButton.setAttribute("title", label);
+  elements.transitToggleButton.setAttribute("aria-pressed", String(transitVisible));
+  updateLineNamesToggleButton();
+}
+
+function toggleLineNames() {
+  lineNamesVisible = !lineNamesVisible;
+  safeSetStorageItem(LINE_NAMES_VISIBLE_KEY, String(lineNamesVisible));
+  updateLineNamesToggleButton();
+  scheduleZoneOverlayUpdate();
+}
+
+function updateLineNamesToggleButton() {
+  const label = lineNamesVisible
+    ? "Hide Line Names"
+    : "Show Line Names";
+  elements.lineNamesToggleButton.setAttribute("aria-label", label);
+  elements.lineNamesToggleButton.setAttribute("title", label);
+  elements.lineNamesToggleButton.setAttribute("aria-pressed", String(lineNamesVisible));
+  elements.lineNamesToggleButton.disabled = !transitVisible;
+}
+
+function updateZoneOverlay() {
+  if (!map || !originalZoneFeature || !activeZoneFeature) return;
+
+  const size = map.getSize();
+  elements.zoneOverlay.setAttribute("viewBox", `0 0 ${size.x} ${size.y}`);
+  elements.zoneOverlay.setAttribute("width", String(size.x));
+  elements.zoneOverlay.setAttribute("height", String(size.y));
+  elements.zoneOverlay.replaceChildren();
+
+  drawDimMaskOnOverlay(size);
+  drawFeatureOnOverlay(originalZoneFeature, "zone-original");
+  drawFeatureOnOverlay(activeZoneFeature, "zone-active");
+  if (radiusFeature) drawFeatureOnOverlay(radiusFeature, "zone-radius");
+
+  if (!touchMapInteractionActive && transitVisible && transitFeatureCollection) {
+    drawTransitOnOverlay(transitFeatureCollection);
+  }
+  if (!touchMapInteractionActive && transitVisible && lineNamesVisible && transitFeatureCollection) {
+    drawTransitLabelsOnOverlay(transitFeatureCollection);
+  }
+  if (!touchMapInteractionActive && transitVisible && droppedPinLatLng) {
+    drawNearbyStopNames(droppedPinLatLng);
+  }
+}
+
+function scheduleZoneOverlayUpdate() {
+  if (overlayUpdateFrame !== null) return;
+  if (touchMapInteractionActive && !isLikelyTouchDevice()) return;
+  overlayUpdateFrame = window.requestAnimationFrame(() => {
+    overlayUpdateFrame = null;
+    updateZoneOverlay();
+  });
+}
+
+function beginTouchMapInteraction() {
+  if (!isLikelyTouchDevice()) return;
+  touchMapInteractionActive = true;
+  clearLongPressTimer();
+  scheduleZoneOverlayUpdate();
+}
+
+function endTouchMapInteraction() {
+  if (!isLikelyTouchDevice()) return;
+  touchMapInteractionActive = false;
+  scheduleZoneOverlayUpdate();
+}
+
+function isLikelyTouchDevice() {
+  return (
+    (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) ||
+    navigator.maxTouchPoints > 0
+  );
+}
+
+function drawTransitOnOverlay(featureCollection) {
+  for (const feature of featureCollection.features || []) {
+    if (feature.properties?.layer === "line") {
+      drawTransitLineFeature(feature);
+    } else if (feature.properties?.layer === "stop") {
+      drawTransitStopFeature(feature);
+    }
+  }
+}
+
+function drawTransitLineFeature(feature) {
+  for (const line of getLineCoordinateSequences(feature.geometry)) {
+    const points = line
+      .map(([lng, lat]) => {
+        const point = map.latLngToContainerPoint([lat, lng]);
+        return `${point.x.toFixed(1)},${point.y.toFixed(1)}`;
+      })
+      .join(" ");
+
+    if (!points) continue;
+
+    const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    polyline.setAttribute("class", "transit-line");
+    polyline.setAttribute("points", points);
+    polyline.style.setProperty("--line-color", feature.properties?.color || "#ff8a1c");
+    elements.zoneOverlay.appendChild(polyline);
+  }
+}
+
+function drawTransitLabelsOnOverlay(featureCollection) {
+  const bounds = map.getBounds();
+  for (const feature of featureCollection.features || []) {
+    if (feature.properties?.layer !== "line" || !feature.properties?.label) continue;
+    for (const line of getLineCoordinateSequences(feature.geometry)) {
+      drawLineLabel(feature.properties.label, line, bounds);
+    }
+  }
+}
+
+function drawLineLabel(label, line, bounds) {
+  if (!line.length) return;
+  const point = getVisibleLineLabelPoint(line, bounds);
+  if (!point) return;
+  drawOverlayText(label, point, "line-name-label");
+}
+
+function getVisibleLineLabelPoint(line, bounds) {
+  if (!bounds || line.length < 2) return null;
+
+  const clipped = turf.bboxClip(
+    turf.lineString(line),
+    [
+      bounds.getWest(),
+      bounds.getSouth(),
+      bounds.getEast(),
+      bounds.getNorth(),
+    ],
+  );
+  const segments = getLineCoordinateSequences(clipped.geometry || clipped);
+  if (!segments.length) return null;
+
+  let longestSegment = null;
+  let longestLength = 0;
+  for (const segment of segments) {
+    if (segment.length < 2) continue;
+    const length = turf.length(turf.lineString(segment), { units: "miles" });
+    if (length > longestLength) {
+      longestLength = length;
+      longestSegment = segment;
+    }
+  }
+
+  if (!longestSegment || longestLength === 0) return null;
+
+  const midpoint = turf.along(
+    turf.lineString(longestSegment),
+    longestLength / 2,
+    { units: "miles" },
+  ).geometry.coordinates;
+  return map.latLngToContainerPoint([midpoint[1], midpoint[0]]);
+}
+
+function drawTransitStopFeature(feature) {
+  for (const [lng, lat] of getPointCoordinates(feature.geometry)) {
+    const point = map.latLngToContainerPoint([lat, lng]);
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("class", "transit-stop");
+    circle.setAttribute("cx", point.x.toFixed(1));
+    circle.setAttribute("cy", point.y.toFixed(1));
+    circle.setAttribute("r", "3.5");
+    elements.zoneOverlay.appendChild(circle);
+  }
+}
+
+function drawNearbyStopNames(pinLatLng) {
+  const nearbyStops = namedStops
+    .map((stop) => ({
+      ...stop,
+      distance: turf.distance(
+        turf.point([pinLatLng.lng, pinLatLng.lat]),
+        turf.point([stop.lng, stop.lat]),
+        { units: "miles" },
+      ),
+    }))
+    .filter((stop) => stop.distance <= SHRINK_RADIUS_MILES)
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 80);
+
+  for (const stop of nearbyStops) {
+    const point = map.latLngToContainerPoint([stop.lat, stop.lng]);
+    drawOverlayText(stop.name, point, "pin-stop-label");
+  }
+}
+
+function drawOverlayText(label, point, className) {
+  const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  text.setAttribute("class", className);
+  text.setAttribute("x", point.x.toFixed(1));
+  text.setAttribute("y", point.y.toFixed(1));
+  text.textContent = label;
+  elements.zoneOverlay.appendChild(text);
+}
+
+function getLineCoordinateSequences(geometry) {
+  if (!geometry) return [];
+
+  if (geometry.type === "LineString") return [geometry.coordinates];
+  if (geometry.type === "MultiLineString") return geometry.coordinates;
+  if (geometry.type === "GeometryCollection") {
+    return geometry.geometries.flatMap(getLineCoordinateSequences);
+  }
+
+  return [];
+}
+
+function getPointCoordinates(geometry) {
+  if (!geometry) return [];
+
+  if (geometry.type === "Point") return [geometry.coordinates];
+  if (geometry.type === "MultiPoint") return geometry.coordinates;
+  if (geometry.type === "GeometryCollection") {
+    return geometry.geometries.flatMap(getPointCoordinates);
+  }
+
+  return [];
+}
+
+function collectFeatures(geojson) {
+  if (!geojson) return [];
+  if (geojson.type === "FeatureCollection") return geojson.features;
+  if (geojson.type === "Feature") return [geojson];
+  if (geojson.type === "GeometryCollection") {
+    return geojson.geometries.map((geometry) => ({
+      type: "Feature",
+      properties: {},
+      geometry,
+    }));
+  }
+  return [{ type: "Feature", properties: {}, geometry: geojson }];
+}
+
+function collectGeometries(geojson) {
+  if (!geojson) return [];
+  if (geojson.type === "FeatureCollection") return geojson.features.flatMap(collectGeometries);
+  if (geojson.type === "Feature") return collectGeometries(geojson.geometry);
+  if (geojson.type === "GeometryCollection") return geojson.geometries.flatMap(collectGeometries);
+  return [geojson];
+}
+
+function isLineGeometry(geometry) {
+  return geometry && ["LineString", "MultiLineString"].includes(geometry.type);
+}
+
+function geometrySignature(geometry) {
+  return JSON.stringify(geometry.coordinates);
+}
+
+function coordinateSignature(lng, lat) {
+  return `${Number(lng).toFixed(6)},${Number(lat).toFixed(6)}`;
+}
+
+function formatLineLabel(route, name) {
+  if (route && name && route !== name) return `${route} - ${name}`;
+  return route || name || "";
+}
+
+function getRouteGroup(feature) {
+  const type = getRouteType(feature);
+  const service = String(feature.properties?.service || "").toUpperCase();
+  return type === "LRT" || type === "OFF" || service.includes("RAIL") ? "Rail" : "Bus";
+}
+
+function drawDimMaskOnOverlay(size) {
+  const viewportPath = `M0 0H${size.x}V${size.y}H0Z`;
+  const activeZonePaths = getExteriorRings(activeZoneFeature)
+    .map((ring) => ringToPath(ring))
+    .join("");
+
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("class", "zone-dim");
+  path.setAttribute("d", `${viewportPath}${activeZonePaths}`);
+  elements.zoneOverlay.appendChild(path);
+}
+
+function drawFeatureOnOverlay(feature, className) {
+  const rings = getExteriorRings(feature);
+  for (const ring of rings) {
+    const points = ringToPoints(ring);
+
+    if (!points) continue;
+
+    const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+    polygon.setAttribute("class", className);
+    polygon.setAttribute("points", points);
+    elements.zoneOverlay.appendChild(polygon);
+  }
+}
+
+function ringToPath(ring) {
+  if (!Array.isArray(ring) || ring.length < 3) return "";
+
+  const commands = ring.map(([lng, lat], index) => {
+    const point = map.latLngToContainerPoint([lat, lng]);
+    return `${index === 0 ? "M" : "L"}${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
+  });
+
+  return `${commands.join("")}Z`;
+}
+
+function ringToPoints(ring) {
+  if (!Array.isArray(ring) || ring.length < 3) return "";
+
+  return ring
+    .map(([lng, lat]) => {
+      const point = map.latLngToContainerPoint([lat, lng]);
+      return `${point.x.toFixed(1)},${point.y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
+function bindControls() {
+  elements.controlsToggleButton.addEventListener("click", toggleControls);
+  elements.zoomInButton.addEventListener("click", () => map.zoomIn());
+  elements.zoomOutButton.addEventListener("click", () => map.zoomOut());
+  elements.visibleRoutesToggleButton.addEventListener("click", toggleVisibleRoutesPanel);
+  elements.centerButton.addEventListener("click", centerOnPlayerAndFollow);
+  elements.transitToggleButton.addEventListener("click", toggleTransitLayer);
+  elements.lineNamesToggleButton.addEventListener("click", toggleLineNames);
+  elements.resetButton.addEventListener("click", resetMap);
+  elements.pagesMenuButton.addEventListener("click", togglePagesMenu);
+  elements.statusButton.addEventListener("click", () => {
+    window.location.href = "status.html";
+  });
+  elements.rulesButton.addEventListener("click", () => {
+    window.location.href = "rules.html";
+  });
+  elements.testingIgnoreButton.addEventListener("click", () => {
+    warningIgnoredForTesting = true;
+    elements.warningOverlay.hidden = true;
+    showStatus("Out-of-bounds warning ignored for this testing session.");
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!elements.pagesMenu || !elements.pagesMenuButton) return;
+    if (event.target.closest(".page-menu")) return;
+    closePagesMenu();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closePagesMenu();
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      stopForegroundTracking();
+    } else {
+      startForegroundTracking();
+    }
+  });
+
+  window.addEventListener("pagehide", stopForegroundTracking);
+  window.addEventListener("pageshow", () => {
+    if (!document.hidden) startForegroundTracking();
+  });
+}
+
+function bindConnectivityEvents() {
+  window.addEventListener("online", () => {
+    tileErrorShown = false;
+    showStatus("Back online. Map tiles and live data can load again.");
+  });
+  window.addEventListener("offline", () => {
+    showStatus("Offline. Cached app data may still work, but map tiles and fresh data may be unavailable.", {
+      persistent: true,
+      error: true,
+    });
+  });
+
+  if (navigator.onLine === false) {
+    showStatus("Offline. Cached app data may still work, but map tiles and fresh data may be unavailable.", {
+      persistent: true,
+      error: true,
+    });
+  }
+}
+
+function toggleControls() {
+  const collapsed = elements.controlsToggleButton.getAttribute("aria-expanded") === "true";
+  elements.controlsToggleButton.setAttribute("aria-expanded", String(!collapsed));
+  const label = collapsed ? "Show map controls" : "Hide map controls";
+  const icon = collapsed ? "#icon-eye" : "#icon-eye-off";
+  elements.controlsToggleButton.querySelector("use")?.setAttribute("href", icon);
+  elements.controlsToggleButton.classList.toggle("is-collapsed", collapsed);
+  elements.controlsToggleButton.setAttribute("aria-label", label);
+  elements.controlsToggleButton.setAttribute("title", label);
+  document.body.classList.toggle("controls-collapsed", collapsed);
+  if (collapsed) closePagesMenu();
+}
+
+function togglePagesMenu() {
+  const open = elements.pagesMenuButton.getAttribute("aria-expanded") === "true";
+  if (open) {
+    closePagesMenu();
+  } else {
+    elements.pagesMenu.hidden = false;
+    elements.pagesMenuButton.setAttribute("aria-expanded", "true");
+  }
+}
+
+function closePagesMenu() {
+  if (!elements.pagesMenu || !elements.pagesMenuButton) return;
+  elements.pagesMenu.hidden = true;
+  elements.pagesMenuButton.setAttribute("aria-expanded", "false");
+}
+
+function toggleVisibleRoutesPanel() {
+  setVisibleRoutesPanelOpen(!visibleRoutesPanelOpen);
+}
+
+function setVisibleRoutesPanelOpen(open) {
+  visibleRoutesPanelOpen = open;
+  elements.visibleRoutesPanel.classList.toggle("is-open", visibleRoutesPanelOpen);
+  elements.visibleRoutesToggleButton.setAttribute("aria-expanded", String(visibleRoutesPanelOpen));
+  elements.visibleRoutesToggleButton.textContent = visibleRoutesPanelOpen ? "Hide Routes" : "Routes";
+  if (visibleRoutesPanelOpen) updateVisibleRoutesPanel();
+}
+
+function bindRoutesSwipe() {
+  for (const target of [elements.visibleRoutesToggleButton, elements.visibleRoutesPanel]) {
+    target.addEventListener("pointerdown", beginRoutesSwipe);
+    target.addEventListener("pointermove", updateRoutesSwipe);
+    target.addEventListener("pointerup", endRoutesSwipe);
+    target.addEventListener("pointercancel", cancelRoutesSwipe);
+    target.addEventListener("lostpointercapture", cancelRoutesSwipe);
+  }
+}
+
+function beginRoutesSwipe(event) {
+  if (event.button !== undefined && event.button !== 0) return;
+  routesSwipeStart = {
+    pointerId: event.pointerId,
+    x: event.clientX,
+    y: event.clientY,
+  };
+  routesSwipeHandled = false;
+  if (event.currentTarget.setPointerCapture) {
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch (error) {
+      // Pointer capture can fail if the pointer has already ended.
+    }
+  }
+}
+
+function updateRoutesSwipe(event) {
+  if (!routesSwipeStart || event.pointerId !== routesSwipeStart.pointerId) return;
+  const dx = event.clientX - routesSwipeStart.x;
+  const dy = event.clientY - routesSwipeStart.y;
+
+  if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+    cancelRoutesSwipe();
+    return;
+  }
+  if (Math.abs(dy) < 42 || Math.abs(dy) < Math.abs(dx) * 1.2) return;
+
+  setVisibleRoutesPanelOpen(dy < 0);
+  routesSwipeHandled = true;
+}
+
+function endRoutesSwipe(event) {
+  if (!routesSwipeStart || event.pointerId !== routesSwipeStart.pointerId) return;
+  if (routesSwipeHandled) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  cancelRoutesSwipe();
+}
+
+function cancelRoutesSwipe() {
+  routesSwipeStart = null;
+  routesSwipeHandled = false;
+}
+
+function centerOnPlayerAndFollow() {
+  if (!playerMarker) {
+    showStatus("Waiting for current location before centering.", { persistent: true });
+    startForegroundTracking();
+    return;
+  }
+  autoFollowEnabled = true;
+  updateCenterButton();
+  map.panTo(playerMarker.getLatLng(), { animate: true });
+}
+
+function disableAutoFollowFromMapInteraction() {
+  if (!autoFollowEnabled) return;
+  autoFollowEnabled = false;
+  updateCenterButton();
+}
+
+function updateCenterButton() {
+  const label = autoFollowEnabled ? "Following current location" : "Center on me";
+  elements.centerButton.setAttribute("aria-label", label);
+  elements.centerButton.setAttribute("title", label);
+  elements.centerButton.setAttribute("aria-pressed", String(autoFollowEnabled));
+}
+
+function updateVisibleRoutesPanel() {
+  if (!elements.visibleRoutesList || !elements.visibleRoutesSummary) return;
+  const visibleRoutes = getVisibleTransitRoutes();
+  const railRoutes = visibleRoutes.filter((route) => route.group === "Rail");
+  const busRoutes = visibleRoutes.filter((route) => route.group === "Bus");
+
+  elements.visibleRoutesSummary.textContent = `${visibleRoutes.length.toLocaleString()} routes`;
+  elements.visibleRoutesList.replaceChildren();
+
+  if (!visibleRoutes.length) {
+    const empty = document.createElement("p");
+    empty.className = "visible-routes-empty";
+    empty.textContent = transitVisible
+      ? "No transit routes are visible in this map view."
+      : "Transit lines and stops are hidden.";
+    elements.visibleRoutesList.appendChild(empty);
+    return;
+  }
+
+  elements.visibleRoutesList.append(
+    renderVisibleRouteGroup("Rail", railRoutes),
+    renderVisibleRouteGroup("Bus", busRoutes),
+  );
+}
+
+function getVisibleTransitRoutes() {
+  if (!map || !transitVisible || !transitFeatureCollection) return [];
+
+  const visibleBounds = map.getBounds();
+  const viewportPolygon = turf.bboxPolygon([
+    visibleBounds.getWest(),
+    visibleBounds.getSouth(),
+    visibleBounds.getEast(),
+    visibleBounds.getNorth(),
+  ]);
+  const routesByKey = new Map();
+
+  for (const feature of transitFeatureCollection.features || []) {
+    if (feature.properties?.layer !== "line") continue;
+    if (!feature.properties?.label) continue;
+    if (!lineFeatureIntersectsViewport(feature, viewportPolygon, visibleBounds)) continue;
+
+    const group = getRouteGroup(feature);
+    const key = `${group}|${feature.properties.route}|${feature.properties.name}`;
+    if (!routesByKey.has(key)) {
+      routesByKey.set(key, {
+        group,
+        label: feature.properties.label,
+        color: feature.properties.color || "#ff8a1c",
+      });
+    }
+  }
+
+  return [...routesByKey.values()].sort((a, b) => {
+    if (a.group !== b.group) return a.group === "Rail" ? -1 : 1;
+    return a.label.localeCompare(b.label, undefined, { numeric: true });
+  });
+}
+
+function lineFeatureIntersectsViewport(feature, viewportPolygon, visibleBounds) {
+  for (const line of getLineCoordinateSequences(feature.geometry)) {
+    if (line.some(([lng, lat]) => visibleBounds.contains([lat, lng]))) return true;
+  }
+
+  try {
+    return turf.lineIntersect(feature, viewportPolygon).features.length > 0;
+  } catch (error) {
+    return false;
+  }
+}
+
+function renderVisibleRouteGroup(title, routes) {
+  const group = document.createElement("section");
+  group.className = "visible-routes-group";
+
+  const heading = document.createElement("h3");
+  heading.textContent = `${title} (${routes.length.toLocaleString()})`;
+
+  const list = document.createElement("ul");
+  for (const route of routes) {
+    const item = document.createElement("li");
+    item.className = "visible-routes-route";
+    item.style.setProperty("--line-color", route.color);
+
+    const color = document.createElement("span");
+    color.className = "visible-routes-route-color";
+
+    const label = document.createElement("span");
+    label.className = "visible-routes-route-label";
+    label.textContent = route.label;
+    label.title = route.label;
+
+    item.append(color, label);
+    list.appendChild(item);
+  }
+
+  if (!routes.length) {
+    const item = document.createElement("li");
+    item.className = "visible-routes-route";
+    item.style.setProperty("--line-color", "rgb(247 250 252 / 0.24)");
+    const color = document.createElement("span");
+    color.className = "visible-routes-route-color";
+    const label = document.createElement("span");
+    label.className = "visible-routes-route-label";
+    label.textContent = "None visible";
+    item.append(color, label);
+    list.appendChild(item);
+  }
+
+  group.append(heading, list);
+  return group;
+}
+
+// Foreground lifecycle state: geolocation watch runs only while the page is visible.
+function startForegroundTracking() {
+  if (watchId !== null || document.hidden) return;
+
+  if (!("geolocation" in navigator)) {
+    showStatus("This browser does not support location tracking.", true);
+    return;
+  }
+
+  watchId = navigator.geolocation.watchPosition(handlePositionUpdate, handlePositionError, {
+    enableHighAccuracy: true,
+    maximumAge: 2000,
+    timeout: 10000,
+  });
+}
+
+function stopForegroundTracking() {
+  if (watchId === null) return;
+  navigator.geolocation.clearWatch(watchId);
+  watchId = null;
+}
+
+// Real-time geofence validation: every GPS update checks the active play zone.
+function handlePositionUpdate(position) {
+  const lng = position.coords.longitude;
+  const lat = position.coords.latitude;
+  lastPlayerPosition = turf.point([lng, lat]);
+
+  const latLng = [lat, lng];
+  if (!playerMarker) {
+    playerMarker = L.marker(latLng, {
+      icon: L.divIcon({
+        className: "",
+        html: '<div class="player-marker"></div>',
+        iconSize: [56, 56],
+        iconAnchor: [28, 28],
+      }),
+      zIndexOffset: 1000,
+    }).addTo(map);
+  } else {
+    playerMarker.setLatLng(latLng);
+  }
+
+  if (autoFollowEnabled) {
+    map.panTo(latLng, { animate: true });
+  }
+
+  validatePlayerBounds();
+}
+
+function handlePositionError(error) {
+  const messages = {
+    1: "Location permission was denied. Enable browser location access for this site.",
+    2: "Location is currently unavailable.",
+    3: "Location request timed out.",
+  };
+  showStatus(messages[error.code] || error.message || "Unable to read location.", true);
+}
+
+function validatePlayerBounds() {
+  if (!lastPlayerPosition || !activeZoneFeature) return;
+  if (!isWarningDateActive()) {
+    elements.warningOverlay.hidden = true;
+    return;
+  }
+
+  const inside = turf.booleanPointInPolygon(lastPlayerPosition, activeZoneFeature, {
+    ignoreBoundary: false,
+  });
+  if (inside) {
+    warningIgnoredForTesting = false;
+    elements.warningOverlay.hidden = true;
+    return;
+  }
+
+  elements.warningOverlay.hidden = warningIgnoredForTesting;
+}
+
+function isWarningDateActive(date = new Date()) {
+  const month = date.getMonth();
+  const day = date.getDate();
+  const afterStart =
+    month > WARNING_START_MONTH_INDEX ||
+    (month === WARNING_START_MONTH_INDEX && day >= WARNING_START_DAY);
+  const beforeEnd =
+    month < WARNING_END_MONTH_INDEX ||
+    (month === WARNING_END_MONTH_INDEX && day <= WARNING_END_DAY);
+  return afterStart && beforeEnd;
+}
+
+// Dynamic shrink math: long-press creates a 1/4-mile circle and intersects it with the uMap polygon.
+function bindLongPress() {
+  const container = map.getContainer();
+
+  container.addEventListener("pointerdown", (event) => {
+    if (event.button !== undefined && event.button !== 0) return;
+    if (
+      event.target.closest(
+        "#controls, #controlsToggleButton, #zoomControls, #visibleRoutesPanel, #statusPanel, #warningOverlay",
+      )
+    ) {
+      return;
+    }
+
+    if (event.pointerType === "touch") {
+      if (!activeTouchPointerIds.has(event.pointerId)) {
+        activeTouchPointerIds.add(event.pointerId);
+        activeTouchPointers += 1;
+      }
+      if (container.setPointerCapture) {
+        try {
+          container.setPointerCapture(event.pointerId);
+        } catch (error) {
+          // The browser may reject capture if the pointer is already gone.
+        }
+      }
+      if (activeTouchPointers > 1) {
+        clearLongPressTimer();
+        touchMapInteractionActive = true;
+        return;
+      }
+    }
+
+    longPressPoint = map.mouseEventToLatLng(event);
+    longPressStartClient = { x: event.clientX, y: event.clientY };
+    window.clearTimeout(longPressTimer);
+    longPressTimer = window.setTimeout(() => {
+      if (longPressPoint) shrinkToPin(longPressPoint);
+      clearLongPressTimer();
+    }, 550);
+  });
+
+  container.addEventListener("pointermove", (event) => {
+    if (!longPressStartClient) return;
+    const dx = event.clientX - longPressStartClient.x;
+    const dy = event.clientY - longPressStartClient.y;
+    if (Math.hypot(dx, dy) > 10) clearLongPressTimer();
+  });
+
+  container.addEventListener("pointerup", (event) => {
+    endTouchPointer(event);
+    clearLongPressTimer();
+  });
+  container.addEventListener("pointercancel", (event) => {
+    endTouchPointer(event);
+    clearLongPressTimer();
+  });
+  container.addEventListener("lostpointercapture", endTouchPointer);
+  container.addEventListener("pointerleave", (event) => {
+    clearLongPressTimer();
+    if (
+      event.pointerType === "touch" &&
+      (!container.hasPointerCapture || !container.hasPointerCapture(event.pointerId))
+    ) {
+      endTouchPointer(event);
+    }
+  });
+
+  map.on("contextmenu", (event) => {
+    event.originalEvent.preventDefault();
+    shrinkToPin(event.latlng);
+  });
+}
+
+function endTouchPointer(event) {
+  if (event.pointerType !== "touch") return;
+
+  if (activeTouchPointerIds.delete(event.pointerId)) {
+    activeTouchPointers = Math.max(0, activeTouchPointers - 1);
+  } else if (activeTouchPointers > activeTouchPointerIds.size) {
+    activeTouchPointers = activeTouchPointerIds.size;
+  }
+
+  if (activeTouchPointers === 0) {
+    touchMapInteractionActive = false;
+    scheduleZoneOverlayUpdate();
+  }
+}
+
+function shrinkToPin(latlng, options = {}) {
+  const snappedStop = options.snap === false ? null : findNearestNamedStop(latlng);
+  const activeLatLng = snappedStop ? L.latLng(snappedStop.lat, snappedStop.lng) : latlng;
+  const activePinPoint = turf.point([activeLatLng.lng, activeLatLng.lat]);
+  const activeCircle = turf.circle(activePinPoint, SHRINK_RADIUS_MILES, {
+    steps: 144,
+    units: "miles",
+  });
+  const intersection = turf.intersect(originalZoneFeature, activeCircle);
+
+  if (
+    !intersection ||
+    !["Polygon", "MultiPolygon"].includes(intersection.geometry.type)
+  ) {
+    showStatus("The 1/4-mile circle does not overlap the mission area.", true);
+    return;
+  }
+
+  activeZoneFeature = turf.cleanCoords(intersection);
+  radiusFeature = activeCircle;
+  droppedPinLatLng = activeLatLng;
+  warningIgnoredForTesting = false;
+  renderMissionLayers();
+  renderPin(activeLatLng, activeCircle);
+  if (options.persist !== false) {
+    savePin(activeLatLng);
+  }
+  validatePlayerBounds();
+  if (options.showMessage !== false) {
+    const snapMessage = snappedStop ? ` Pin centered on ${snappedStop.name}.` : "";
+    showStatus(`Mission area shrunk to the intersection of the original zone and the 1/4-mile pin radius.${snapMessage}`);
+  }
+}
+
+function findNearestNamedStop(latlng) {
+  if (!namedStops.length) return null;
+
+  const nearest = namedStops
+    .map((stop) => ({
+      ...stop,
+      distance: turf.distance(
+        turf.point([latlng.lng, latlng.lat]),
+        turf.point([stop.lng, stop.lat]),
+        { units: "miles" },
+      ),
+    }))
+    .sort((a, b) => a.distance - b.distance)[0];
+
+  if (!nearest || nearest.distance > 0.03) return null;
+  return nearest;
+}
+
+function renderPin(latlng, circleFeature) {
+  if (pinMarker) pinMarker.remove();
+  if (radiusLayer) radiusLayer.remove();
+
+  pinMarker = L.marker(latlng, {
+    icon: L.divIcon({
+      className: "",
+      html: '<div class="pin-marker"></div>',
+      iconSize: [34, 34],
+      iconAnchor: [17, 34],
+    }),
+    zIndexOffset: 900,
+  }).addTo(map);
+
+  radiusLayer = L.geoJSON(circleFeature, {
+    interactive: false,
+    pane: "overlayPane",
+    style: {
+      color: "#ff3df2",
+      dashArray: "6 6",
+      lineCap: "round",
+      weight: 4,
+      opacity: 1,
+      fillOpacity: 0,
+    },
+  }).addTo(map);
+
+  radiusLayer.bringToFront();
+}
+
+function resetMap() {
+  activeZoneFeature = originalZoneFeature;
+  radiusFeature = null;
+  droppedPinLatLng = null;
+  activeTouchPointers = 0;
+  activeTouchPointerIds.clear();
+  touchMapInteractionActive = false;
+  warningIgnoredForTesting = false;
+  if (pinMarker) pinMarker.remove();
+  if (radiusLayer) radiusLayer.remove();
+  pinMarker = null;
+  radiusLayer = null;
+  safeRemoveStorageItem(STORED_PIN_KEY);
+  renderMissionLayers();
+  scheduleZoneOverlayUpdate();
+  validatePlayerBounds();
+  showStatus("Cleared saved pin and restored the original mission boundary.");
+}
+
+function savePin(latlng) {
+  safeSetStorageItem(
+    STORED_PIN_KEY,
+    JSON.stringify({
+      lat: latlng.lat,
+      lng: latlng.lng,
+      savedAt: new Date().toISOString(),
+    }),
+  );
+}
+
+function restoreStoredPin() {
+  const rawPin = safeGetStorageItem(STORED_PIN_KEY);
+  if (!rawPin) return false;
+
+  try {
+    const parsed = JSON.parse(rawPin);
+    if (!Number.isFinite(parsed.lat) || !Number.isFinite(parsed.lng)) {
+      throw new Error("Stored pin is malformed.");
+    }
+
+    shrinkToPin(L.latLng(parsed.lat, parsed.lng), {
+      persist: false,
+      showMessage: false,
+    });
+    showStatus("Restored saved pin from this browser.");
+    return true;
+  } catch (error) {
+    safeRemoveStorageItem(STORED_PIN_KEY);
+    showStatus("Saved pin could not be restored and was cleared.", true);
+    return false;
+  }
+}
+
+function fitToActiveZone() {
+  if (!map || !activeZoneFeature) return;
+  const bounds = L.geoJSON(activeZoneFeature).getBounds();
+  map.fitBounds(bounds, {
+    padding: [36, 36],
+    maxZoom: 16,
+  });
+  scheduleZoneOverlayUpdate();
+}
+
+function getExteriorRings(feature) {
+  if (!feature?.geometry) return [];
+
+  if (feature.geometry.type === "Polygon") {
+    return [feature.geometry.coordinates[0]];
+  }
+
+  if (feature.geometry.type === "MultiPolygon") {
+    return feature.geometry.coordinates.map((polygon) => polygon[0]);
+  }
+
+  return [];
+}
+
+function showStatus(message, options = {}) {
+  const normalizedOptions = typeof options === "boolean"
+    ? { persistent: options }
+    : options;
+  const persistent = Boolean(normalizedOptions.persistent);
+  window.clearTimeout(showStatus.timeoutId);
+  showStatus.timeoutId = null;
+  elements.statusPanel.textContent = message;
+  elements.statusPanel.classList.toggle("is-error", Boolean(normalizedOptions.error));
+  elements.statusPanel.classList.add("is-visible");
+  if (!persistent) {
+    showStatus.timeoutId = window.setTimeout(() => {
+      elements.statusPanel.classList.remove("is-visible");
+      elements.statusPanel.classList.remove("is-error");
+      showStatus.timeoutId = null;
+    }, 5200);
+  }
+}
+
+function clearLongPressTimer() {
+  if (longPressTimer !== null) {
+    window.clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+  longPressPoint = null;
+  longPressStartClient = null;
+}

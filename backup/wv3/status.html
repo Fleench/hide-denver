@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#101418" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Mission Status" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Mission Status</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icons/icon.svg" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="rules-page status-page">
+    <main class="rules-shell status-shell">
+      <header class="rules-header status-header">
+        <div>
+          <h1>Mission Status</h1>
+          <p>Live summary of the current game map, service lines, and stops.</p>
+        </div>
+        <button id="statusBackButton" class="rules-back" type="button">Back to Map</button>
+      </header>
+
+      <section id="statusCards" class="status-grid" aria-live="polite">
+        <article class="status-card">
+          <span class="status-number">...</span>
+          <h2>Loading</h2>
+          <p>Reading local transit files...</p>
+        </article>
+      </section>
+    </main>
+
+    <script src="pwa.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
+    <script src="status.js"></script>
+  </body>
+</html>
