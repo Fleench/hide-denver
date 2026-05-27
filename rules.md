@@ -4,13 +4,13 @@
 The clear area on the map is the current legal play area. The dimmed area is outside the mission boundary.
 
 ## Location Warning
-If your live location leaves the active play area, the app displays a full-screen warning. During real play, return to the legal area immediately.
+If your live location leaves the active play area, the app shows a persistent warning notification, tints the map red, and turns app controls red. During real play, return to the legal area immediately.
 
-## Testing Mode
-The warning can be dismissed during testing with **I am testing the app ignore this message**. This only hides the warning for testing; it does not change the boundary.
+## Dev Settings
+Press **Status** and **Rules** at the same time to open the hidden dev settings tab. Use it to disable the boundary warning, copy map tap coordinates, switch offline mode, or enable no-UI mode for testing. No-UI mode hides the whole interface and transit overlays; exit it by reloading the app or clicking the map 6 times in a row.
 
 ## Dropping a Pin
-Touch and hold, or click and hold, on the map to set a hiding pin. The app snaps the pin to the nearest approved stop when possible, then builds a 1/4-mile hiding zone around it.
+Touch and hold, or click and hold, on the map to set a hiding pin. The pin must be close enough to an approved RTD stop or station for the app to snap to it. The app then builds a 1/4-mile hiding zone around that approved stop or station.
 
 ## Saved Pin
 The current pin is saved in this browser. If the page reloads, the app restores the saved pin and the matching hiding zone.

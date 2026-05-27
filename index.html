@@ -29,14 +29,6 @@
         Loading mission area...
       </section>
 
-      <section id="warningOverlay" role="alert" aria-live="assertive" hidden>
-        <div>WARNING: YOU HAVE LEFT THE MISSION AREA.</div>
-        <div>RETURN IMMEDIATELY.</div>
-        <button id="testingIgnoreButton" type="button">
-          I am testing the app ignore this message
-        </button>
-      </section>
-
       <svg class="icon-sprite" aria-hidden="true">
         <symbol id="icon-eye" viewBox="0 0 24 24">
           <path d="M2.1 12s3.6-6.5 9.9-6.5S21.9 12 21.9 12 18.3 18.5 12 18.5 2.1 12 2.1 12Z" />
@@ -145,6 +137,30 @@
               <button id="rulesRefreshButton" class="small-action-button" type="button">Refresh</button>
             </div>
             <div id="rulesCards" class="rules-grid-pane"></div>
+          </div>
+
+          <div id="devContent" class="tab-content" hidden>
+            <div class="dev-header-pane">
+              <h2>Dev Settings</h2>
+            </div>
+            <div class="dev-settings-pane">
+              <label class="setting-toggle">
+                <input id="warningDisableToggle" type="checkbox" />
+                <span>Disable boundary warning</span>
+              </label>
+              <label class="setting-toggle">
+                <input id="copyCoordinatesToggle" type="checkbox" />
+                <span>Copy coordinates on map tap</span>
+              </label>
+              <label class="setting-toggle">
+                <input id="offlineModeToggle" type="checkbox" />
+                <span>Offline mode</span>
+              </label>
+              <label class="setting-toggle">
+                <input id="noUiModeToggle" type="checkbox" />
+                <span>No UI mode</span>
+              </label>
+            </div>
           </div>
         </div>
       </section>

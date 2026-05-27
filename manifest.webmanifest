@@ -18,6 +18,11 @@
   ],
   "shortcuts": [
     {
+      "name": "Map",
+      "short_name": "Map",
+      "url": "index.html"
+    },
+    {
       "name": "Rules",
       "short_name": "Rules",
       "url": "rules.html"
@@ -26,6 +31,11 @@
       "name": "Status",
       "short_name": "Status",
       "url": "status.html"
+    },
+    {
+      "name": "Dev Settings",
+      "short_name": "Dev",
+      "url": "index.html?tab=dev"
     }
   ]
 }

@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#101418" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Mission Area" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Mission Area Companion</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icons/icon.svg" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIINfQWQf1zsFBi7pLPpU+0XYr1ZohA2B0s="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main id="app">
+      <div id="map" aria-label="Mission area map"></div>
+      <svg id="zoneOverlay" aria-hidden="true"></svg>
+
+      <section id="statusPanel" role="status" aria-live="polite">
+        Loading mission area...
+      </section>
+
+      <svg class="icon-sprite" aria-hidden="true">
+        <symbol id="icon-eye" viewBox="0 0 24 24">
+          <path d="M2.1 12s3.6-6.5 9.9-6.5S21.9 12 21.9 12 18.3 18.5 12 18.5 2.1 12 2.1 12Z" />
+          <circle cx="12" cy="12" r="3" />
+        </symbol>
+        <symbol id="icon-eye-off" viewBox="0 0 24 24">
+          <path d="m3 3 18 18" />
+          <path d="M10.6 5.7A10.6 10.6 0 0 1 12 5.5c6.3 0 9.9 6.5 9.9 6.5a18.6 18.6 0 0 1-3.2 4" />
+          <path d="M6.2 6.9A18.1 18.1 0 0 0 2.1 12S5.7 18.5 12 18.5a9.8 9.8 0 0 0 4.1-.9" />
+          <path d="M9.9 9.9A3 3 0 0 0 14.1 14.1" />
+        </symbol>
+        <symbol id="icon-crosshair" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="7" />
+          <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+        </symbol>
+        <symbol id="icon-navigation" viewBox="0 0 24 24">
+          <path d="M12 2 19 21 12 17 5 21 12 2Z" />
+        </symbol>
+        <symbol id="icon-transit" viewBox="0 0 24 24">
+          <rect x="5" y="3" width="14" height="15" rx="2" />
+          <path d="M8 21h8M9 18l-2 3M15 18l2 3M8 7h8M8 13h.1M16 13h.1" />
+        </symbol>
+        <symbol id="icon-label" viewBox="0 0 24 24">
+          <path d="M20 12 12 20 4 12V4h8l8 8Z" />
+          <circle cx="9" cy="9" r="1.5" />
+        </symbol>
+        <symbol id="icon-reset" viewBox="0 0 24 24">
+          <path d="M3 12a9 9 0 1 0 3-6.7" />
+          <path d="M3 4v6h6" />
+        </symbol>
+        <symbol id="icon-menu" viewBox="0 0 24 24">
+          <path d="M4 7h16M4 12h16M4 17h16" />
+        </symbol>
+        <symbol id="icon-battery" viewBox="0 0 24 24">
+          <rect x="2" y="7" width="16" height="10" rx="2" ry="2" />
+          <path d="M22 11v2" />
+        </symbol>
+        <symbol id="icon-battery-charging" viewBox="0 0 24 24">
+          <path d="M15 7h1a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2" />
+          <path d="M6 7H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h1" />
+          <path d="m11 7-3 5h4l-3 5" />
+          <line x1="22" y1="11" x2="22" y2="13" />
+        </symbol>
+      </svg>
+
+      <section id="zoomControls" aria-label="Map zoom controls">
+        <button id="zoomInButton" type="button" aria-label="Zoom in">+</button>
+        <button id="zoomOutButton" type="button" aria-label="Zoom out">-</button>
+      </section>
+
+      <section id="mapActions" aria-label="Map actions">
+        <button id="centerButton" class="icon-button" type="button" aria-pressed="false" aria-label="Center on me" title="Center on me">
+          <svg><use href="#icon-crosshair"></use></svg>
+        </button>
+      </section>
+
+      <section id="bottomPanel" class="bottom-panel" aria-label="App features">
+        <div class="bottom-panel-toggles">
+          <button id="statusToggleButton" class="bottom-panel-toggle" type="button" aria-expanded="false">
+            <div class="status-tab-info">
+              <span id="statusClock">--:-- --</span>
+              <span id="statusBattery">
+                <svg class="battery-icon"><use href="#icon-battery"></use></svg>
+                <span id="batteryLevel">--%</span>
+              </span>
+            </div>
+            <span class="tab-label">Status</span>
+          </button>
+          <button id="rulesToggleButton" class="bottom-panel-toggle" type="button" aria-expanded="false">
+            Rules
+          </button>
+        </div>
+
+        <div class="bottom-panel-content">
+          <div id="statusContent" class="tab-content" hidden>
+            <div class="status-header-pane">
+              <h2>Mission Status</h2>
+            </div>
+            <div class="quick-settings-area">
+              <div class="quick-settings-header">Quick Settings</div>
+              <div class="quick-settings-buttons">
+                <button id="transitToggleButton" class="icon-button" type="button" aria-pressed="true" aria-label="Hide lines and stops" title="Hide lines and stops">
+                  <svg><use href="#icon-transit"></use></svg>
+                </button>
+                <button id="lineNamesToggleButton" class="icon-button" type="button" aria-pressed="false" aria-label="Show line names" title="Show line names">
+                  <svg><use href="#icon-label"></use></svg>
+                </button>
+                <button id="resetButton" class="icon-button" type="button" aria-label="Reset map" title="Reset map">
+                  <svg><use href="#icon-reset"></use></svg>
+                </button>
+              </div>
+            </div>
+            <section class="visible-routes-status-block" aria-label="Visible transit lines">
+              <div class="visible-routes-header">
+                <h2>Lines In View</h2>
+                <span id="visibleRoutesSummary">0 lines</span>
+              </div>
+              <div id="visibleRoutesList" class="visible-routes-list"></div>
+            </section>
+            <div id="statusCards" class="status-grid-pane"></div>
+          </div>
+
+          <div id="rulesContent" class="tab-content" hidden>
+            <div class="rules-header-pane">
+              <h2>Mission Rules</h2>
+              <button id="rulesRefreshButton" class="small-action-button" type="button">Refresh</button>
+            </div>
+            <div id="rulesCards" class="rules-grid-pane"></div>
+          </div>
+
+          <div id="devContent" class="tab-content" hidden>
+            <div class="dev-header-pane">
+              <h2>Dev Settings</h2>
+            </div>
+            <div class="dev-settings-pane">
+              <label class="setting-toggle">
+                <input id="warningDisableToggle" type="checkbox" />
+                <span>Disable boundary warning</span>
+              </label>
+              <label class="setting-toggle">
+                <input id="copyCoordinatesToggle" type="checkbox" />
+                <span>Copy coordinates on map tap</span>
+              </label>
+              <label class="setting-toggle">
+                <input id="offlineModeToggle" type="checkbox" />
+                <span>Offline mode</span>
+              </label>
+              <label class="setting-toggle">
+                <input id="noUiModeToggle" type="checkbox" />
+                <span>No UI mode</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
+    <script src="pwa.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

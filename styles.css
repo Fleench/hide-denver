@@ -239,7 +239,7 @@ body.pane-open #zoomControls {
 }
 
 body.pane-fullscreen #zoomControls {
-  transform: translateY(calc(-100vh + 48px + 12px + 12px));
+  display: none;
 }
 
 @media (min-height: 800px) {
@@ -262,7 +262,7 @@ body.pane-open #mapActions {
 }
 
 body.pane-fullscreen #mapActions {
-  transform: translateY(calc(-100vh + 48px + 12px + 12px));
+  display: none;
 }
 
 @media (min-height: 800px) {
@@ -340,7 +340,8 @@ button {
 }
 
 .bottom-panel.is-fullscreen {
-  height: calc(100vh - max(12px, env(safe-area-inset-top)));
+  height: 100vh;
+  padding-top: max(12px, env(safe-area-inset-top));
   transform: translateY(0);
 }
 
@@ -354,10 +355,19 @@ button {
   justify-content: flex-end;
 }
 
+.bottom-panel.is-fullscreen .bottom-panel-toggles {
+  position: static;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
 .bottom-panel-toggle {
   width: auto;
   flex: 0 1 auto;
   min-width: 90px;
+  max-width: 100%;
   height: 48px;
   padding: 0 12px;
   border-bottom-right-radius: 0;
@@ -367,6 +377,13 @@ button {
   z-index: 1452;
 }
 
+.bottom-panel.is-fullscreen .bottom-panel-toggle {
+  width: 100%;
+  min-width: 0;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
 #statusToggleButton {
   min-width: 150px;
   display: flex;
@@ -374,6 +391,10 @@ button {
   justify-content: center;
   align-items: center;
   gap: 1px;
+}
+
+.bottom-panel.is-fullscreen #statusToggleButton {
+  min-width: 0;
 }
 
 .bottom-panel-toggle[aria-expanded="true"] {
@@ -387,14 +408,35 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
+  max-width: 100%;
   font-size: 11px;
   font-weight: 500;
   color: rgb(247 250 252 / 0.7);
+  overflow: hidden;
 }
 
 .tab-label {
+  max-width: 100%;
+  overflow: hidden;
   font-weight: 800;
   font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bottom-panel-toggle,
+.status-tab-info,
+.tab-label,
+#statusClock,
+#batteryLevel {
+  min-width: 0;
+}
+
+#statusClock,
+#batteryLevel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #statusClock {
@@ -420,7 +462,12 @@ button {
 .bottom-panel-content {
   display: grid;
   height: 100%;
+  min-height: 0;
   overflow: hidden;
+}
+
+.bottom-panel.is-fullscreen .bottom-panel-content {
+  height: calc(100% - 58px);
 }
 
 .tab-content {
@@ -444,6 +491,40 @@ button {
   gap: 16px;
   padding-bottom: 12px;
   border-bottom: 1px solid rgb(255 255 255 / 0.12);
+}
+
+.dev-header-pane {
+  flex: 0 0 auto;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.12);
+}
+
+.dev-header-pane h2 {
+  margin: 0;
+}
+
+.dev-settings-pane {
+  flex: 0 0 auto;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.03);
+}
+
+.setting-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: rgb(247 250 252 / 0.92);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.setting-toggle input {
+  width: 22px;
+  height: 22px;
+  accent-color: #dc2626;
 }
 
 .visible-routes-status-block {
@@ -718,43 +799,61 @@ button[aria-pressed="true"] {
   display: block;
 }
 
-#warningOverlay {
-  position: fixed;
-  z-index: 2000;
-  left: max(12px, env(safe-area-inset-left));
-  right: max(12px, env(safe-area-inset-right));
-  top: max(12px, env(safe-area-inset-top));
-  display: grid;
-  place-content: center;
-  gap: 10px;
-  padding: 16px;
-  border-radius: 12px;
-  background: #9f1111;
-  color: white;
-  text-align: center;
-  font-size: clamp(18px, 5vw, 32px);
-  font-weight: 950;
-  line-height: 1.1;
-  box-shadow: 0 12px 36px rgb(0 0 0 / 0.45);
-  animation: warningFlash 650ms linear infinite alternate;
+body.boundary-warning-active #map {
+  filter: sepia(0.65) saturate(1.8) hue-rotate(315deg) brightness(0.88);
 }
 
-#warningOverlay[hidden] {
+body.boundary-warning-active #zoneOverlay .zone-dim {
+  fill: rgb(127 29 29 / 0.42);
+}
+
+body.boundary-warning-active button,
+body.boundary-warning-active .bottom-panel,
+body.boundary-warning-active .bottom-panel-toggle,
+body.boundary-warning-active .status-card,
+body.boundary-warning-active .rule-card,
+body.boundary-warning-active .visible-routes-status-block,
+body.boundary-warning-active .quick-settings-area,
+body.boundary-warning-active .dev-settings-pane,
+body.boundary-warning-active .visible-routes-route,
+body.boundary-warning-active .line-popup .leaflet-popup-content-wrapper {
+  border-color: rgb(254 202 202 / 0.5);
+  background: rgb(127 29 29 / 0.92);
+  color: #fff;
+}
+
+body.boundary-warning-active #statusPanel {
+  border: 1px solid rgb(254 202 202 / 0.7);
+  background: rgb(127 29 29 / 0.96);
+}
+
+body.boundary-warning-active .status-number,
+body.boundary-warning-active .status-card h2,
+body.boundary-warning-active .rule-card h2,
+body.boundary-warning-active .rules-category-title {
+  color: #fecaca;
+}
+
+body.no-ui-mode #zoomControls,
+body.no-ui-mode #mapActions,
+body.no-ui-mode #bottomPanel,
+body.no-ui-mode #statusPanel,
+body.no-ui-mode .leaflet-control-container,
+body.no-ui-mode .leaflet-marker-pane,
+body.no-ui-mode .leaflet-popup-pane {
   display: none;
 }
 
-#testingIgnoreButton {
-  justify-self: center;
-  max-width: min(520px, 92vw);
-  min-height: 44px;
-  margin-top: 12px;
-  padding: 0 14px;
-  border: 2px solid rgb(255 255 255 / 0.78);
-  background: white;
-  color: #8a0d0d;
-  font-size: 14px;
-  font-weight: 900;
-  line-height: 1.15;
+body.no-ui-mode #zoneOverlay .transit-line,
+body.no-ui-mode #zoneOverlay .transit-stop,
+body.no-ui-mode #zoneOverlay .line-name-label,
+body.no-ui-mode #zoneOverlay .pin-stop-label {
+  display: none;
+}
+
+body.no-ui-mode .player-marker,
+body.no-ui-mode .pin-marker {
+  display: none;
 }
 
 .player-marker {
@@ -812,15 +911,5 @@ button[aria-pressed="true"] {
   to {
     opacity: 0;
     transform: scale(1.8);
-  }
-}
-
-@keyframes warningFlash {
-  from {
-    filter: brightness(0.88);
-  }
-
-  to {
-    filter: brightness(1.25);
   }
 }

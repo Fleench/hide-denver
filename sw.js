@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_VERSION = "mission-area-v16";
+const CACHE_VERSION = "mission-area-v18";
 const APP_SHELL_CACHE = `${CACHE_VERSION}-app-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -25,6 +25,7 @@ const APP_SHELL_URLS = [
   "assets/LightrailLines_Offset.geojson",
   "assets/LightrailStations.geojson",
   "assets/game_zone.geojson",
+  "hide-denver-printable-play-area.geojson",
   "icons/icon.svg",
   "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
   "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js",

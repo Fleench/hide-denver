@@ -19,10 +19,10 @@ const REMOTE_RULES_URL = "https://denver.flench.me/rules.md";
 const REMOTE_RULES_PROXY_URL = "remote-rules.md";
 const RULES_CACHE_TEXT_KEY = "hideDenver.rulesMarkdown";
 const RULES_CACHE_VERSION_KEY = "hideDenver.rulesVersion";
-const WARNING_START_MONTH_INDEX = 4;
-const WARNING_START_DAY = 28;
-const WARNING_END_MONTH_INDEX = 5;
-const WARNING_END_DAY = 2;
+const WARNING_DISABLED_KEY = "hideDenver.warningDisabled";
+const COPY_COORDINATES_KEY = "hideDenver.copyCoordinatesOnTap";
+const OFFLINE_MODE_KEY = "hideDenver.offlineMode";
+const NO_UI_MODE_KEY = "hideDenver.noUiMode";
 const ROUTE_TYPE_COLORS = {
   LOC: ["#e11d48", "#0ea5e9", "#f59e0b"],
   REG: ["#2563eb", "#dc2626", "#65a30d"],
@@ -48,6 +48,11 @@ const elements = {
   rulesRefreshButton: document.querySelector("#rulesRefreshButton"),
   rulesContent: document.querySelector("#rulesContent"),
   rulesCards: document.querySelector("#rulesCards"),
+  devContent: document.querySelector("#devContent"),
+  warningDisableToggle: document.querySelector("#warningDisableToggle"),
+  copyCoordinatesToggle: document.querySelector("#copyCoordinatesToggle"),
+  offlineModeToggle: document.querySelector("#offlineModeToggle"),
+  noUiModeToggle: document.querySelector("#noUiModeToggle"),
   visibleRoutesSummary: document.querySelector("#visibleRoutesSummary"),
   visibleRoutesList: document.querySelector("#visibleRoutesList"),
   statusClock: document.querySelector("#statusClock"),
@@ -56,9 +61,7 @@ const elements = {
   transitToggleButton: document.querySelector("#transitToggleButton"),
   lineNamesToggleButton: document.querySelector("#lineNamesToggleButton"),
   resetButton: document.querySelector("#resetButton"),
-  testingIgnoreButton: document.querySelector("#testingIgnoreButton"),
   statusPanel: document.querySelector("#statusPanel"),
-  warningOverlay: document.querySelector("#warningOverlay"),
 };
 
 let map;
@@ -94,8 +97,20 @@ let longPressPoint = null;
 let longPressStartClient = null;
 let paneSwipeStart = null;
 let paneSwipeHandled = false;
-let warningIgnoredForTesting = false;
+let warningDisabled = safeGetStorageItem(WARNING_DISABLED_KEY) === "true";
+let copyCoordinatesOnTap = safeGetStorageItem(COPY_COORDINATES_KEY) === "true";
+let offlineMode = safeGetStorageItem(OFFLINE_MODE_KEY) === "true";
+let noUiMode = safeGetStorageItem(NO_UI_MODE_KEY) === "true";
+let warningActive = false;
+const devChordPointers = new Set();
+let suppressTabClickCount = 0;
+let lastDevChordClick = null;
 let tileErrorShown = false;
+let noUiExitClickCount = 0;
+let noUiExitClickTimer = null;
+const launchTabId = getLaunchTabId();
+
+document.body.classList.toggle("no-ui-mode", noUiMode);
 
 bootstrap();
 
@@ -123,9 +138,19 @@ async function bootstrap() {
       showStatus("Long-press the map to shrink the mission area to a 1/4-mile radius.");
     }
     loadTransitOverlays();
+    if (launchTabId) setTabState(launchTabId, false);
   } catch (error) {
     showStatus(error.message || String(error), { persistent: true, error: true });
   }
+}
+
+function getLaunchTabId() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const tab = String(params.get("tab") || window.location.hash.replace(/^#/, "") || "").toLowerCase();
+    if (tab === "status" || tab === "rules" || tab === "dev") return tab;
+  } catch (error) {}
+  return null;
 }
 
 async function loadTransitOverlays() {
@@ -621,6 +646,7 @@ function createMap() {
   map.on("moveend zoomend resize", updateVisibleRoutesPanel);
   map.on("move zoom zoomend viewreset resize", scheduleZoneOverlayUpdate);
   map.on("dragstart zoomstart", () => { disableAutoFollowFromMapInteraction(); clearSelectedTransitLineFromMapInteraction(); });
+  map.on("click", handleMapClick);
   requestAnimationFrame(() => { map.invalidateSize(); fitToActiveZone(); scheduleZoneOverlayUpdate(); });
 }
 
@@ -685,9 +711,10 @@ function updateZoneOverlay() {
   drawFeatureOnOverlay(originalZoneFeature, "zone-original", overlayLayers.zone);
   drawFeatureOnOverlay(activeZoneFeature, "zone-active", overlayLayers.zone);
   if (radiusFeature) drawFeatureOnOverlay(radiusFeature, "zone-radius", overlayLayers.zone);
-  if (!touchMapInteractionActive && transitVisible && transitFeatureCollection) drawTransitOnOverlay(transitFeatureCollection, overlayLayers.transit);
-  if (!touchMapInteractionActive && transitVisible && lineNamesVisible && transitFeatureCollection) drawTransitLabelsOnOverlay(transitFeatureCollection, overlayLayers.labels);
-  if (!touchMapInteractionActive && transitVisible && droppedPinLatLng) drawNearbyStopNames(droppedPinLatLng, overlayLayers.labels);
+  const showTransitOverlay = !noUiMode && !touchMapInteractionActive && transitVisible;
+  if (showTransitOverlay && transitFeatureCollection) drawTransitOnOverlay(transitFeatureCollection, overlayLayers.transit);
+  if (showTransitOverlay && lineNamesVisible && transitFeatureCollection) drawTransitLabelsOnOverlay(transitFeatureCollection, overlayLayers.labels);
+  if (showTransitOverlay && droppedPinLatLng) drawNearbyStopNames(droppedPinLatLng, overlayLayers.labels);
 }
 
 function ensureOverlayLayers() {
@@ -916,19 +943,40 @@ function bindControls() {
   elements.zoomInButton.addEventListener("click", () => map.zoomIn());
   elements.zoomOutButton.addEventListener("click", () => map.zoomOut());
 
-  elements.statusToggleButton.addEventListener("click", () => toggleTab("status"));
-  elements.rulesToggleButton.addEventListener("click", () => toggleTab("rules"));
+  elements.statusToggleButton.addEventListener("click", () => handlePanelToggleClick("status"));
+  elements.rulesToggleButton.addEventListener("click", () => handlePanelToggleClick("rules"));
   elements.rulesRefreshButton?.addEventListener("click", () => loadMissionRules({ checkRemote: true, forceRemote: true }));
+  bindDevSettingsChord();
+  elements.warningDisableToggle?.addEventListener("change", () => {
+    warningDisabled = !!elements.warningDisableToggle.checked;
+    safeSetStorageItem(WARNING_DISABLED_KEY, String(warningDisabled));
+    validatePlayerBounds();
+    showStatus(warningDisabled ? "Boundary warning disabled." : "Boundary warning enabled.");
+  });
+  elements.copyCoordinatesToggle?.addEventListener("change", () => {
+    copyCoordinatesOnTap = !!elements.copyCoordinatesToggle.checked;
+    safeSetStorageItem(COPY_COORDINATES_KEY, String(copyCoordinatesOnTap));
+    showStatus(copyCoordinatesOnTap ? "Map tap coordinates enabled." : "Map tap coordinates disabled.");
+  });
+  elements.offlineModeToggle?.addEventListener("change", () => {
+    offlineMode = !!elements.offlineModeToggle.checked;
+    safeSetStorageItem(OFFLINE_MODE_KEY, String(offlineMode));
+    updateDevSettingsControls();
+    showStatus(offlineMode ? "Offline mode enabled." : "Offline mode disabled.");
+  });
+  elements.noUiModeToggle?.addEventListener("change", () => {
+    setNoUiMode(!!elements.noUiModeToggle.checked);
+  });
+  if (elements.warningDisableToggle) elements.warningDisableToggle.checked = warningDisabled;
+  if (elements.copyCoordinatesToggle) elements.copyCoordinatesToggle.checked = copyCoordinatesOnTap;
+  if (elements.offlineModeToggle) elements.offlineModeToggle.checked = offlineMode;
+  if (elements.noUiModeToggle) elements.noUiModeToggle.checked = noUiMode;
+  updateDevSettingsControls();
 
   elements.centerButton.addEventListener("click", centerOnPlayerAndFollow);
   elements.transitToggleButton.addEventListener("click", toggleTransitLayer);
   elements.lineNamesToggleButton.addEventListener("click", toggleLineNames);
   elements.resetButton.addEventListener("click", resetMap);
-  elements.testingIgnoreButton.addEventListener("click", () => {
-    warningIgnoredForTesting = true;
-    elements.warningOverlay.hidden = true;
-    showStatus("Out-of-bounds warning ignored for this testing session.");
-  });
 
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) stopForegroundTracking(); else startForegroundTracking();
@@ -937,8 +985,47 @@ function bindControls() {
   window.addEventListener("pageshow", () => { if (!document.hidden) startForegroundTracking(); });
 }
 
+function handlePanelToggleClick(id) {
+  if (suppressTabClickCount > 0) {
+    suppressTabClickCount--;
+    return;
+  }
+  const now = Date.now();
+  if (lastDevChordClick && lastDevChordClick.id !== id && now - lastDevChordClick.time < 450) {
+    lastDevChordClick = null;
+    setTabState("dev", isFullscreen);
+    return;
+  }
+  lastDevChordClick = { id, time: now };
+  toggleTab(id);
+}
+
 function toggleTab(id) {
-  if (activeTabId === id) setTabState(null); else setTabState(id);
+  if (activeTabId === id) {
+    setTabState(isFullscreen ? id : null, false);
+  } else {
+    setTabState(id, isFullscreen);
+  }
+}
+
+function bindDevSettingsChord() {
+  const buttons = [
+    { el: elements.statusToggleButton, id: "status" },
+    { el: elements.rulesToggleButton, id: "rules" },
+  ];
+
+  for (const { el, id } of buttons) {
+    el.addEventListener("pointerdown", () => {
+      devChordPointers.add(id);
+      if (devChordPointers.has("status") && devChordPointers.has("rules")) {
+        suppressTabClickCount = 2;
+        setTabState("dev", isFullscreen);
+      }
+    });
+    el.addEventListener("pointerup", () => devChordPointers.delete(id));
+    el.addEventListener("pointercancel", () => devChordPointers.delete(id));
+    el.addEventListener("pointerleave", () => devChordPointers.delete(id));
+  }
 }
 
 function setTabState(id, fullscreen = false) {
@@ -947,6 +1034,7 @@ function setTabState(id, fullscreen = false) {
   const isOpen = activeTabId !== null;
   const isStatus = activeTabId === "status";
   const isRules = activeTabId === "rules";
+  const isDev = activeTabId === "dev";
 
   document.body.classList.toggle("pane-open", isOpen);
   document.body.classList.toggle("pane-fullscreen", isOpen && isFullscreen);
@@ -959,6 +1047,9 @@ function setTabState(id, fullscreen = false) {
   elements.rulesToggleButton.setAttribute("aria-expanded", String(isRules));
   elements.rulesContent.hidden = !isRules;
 
+  if (elements.devContent) elements.devContent.hidden = !isDev;
+  if (isDev) updateDevSettingsControls();
+
   if (isStatus) {
     updateVisibleRoutesPanel();
     loadMissionStatus();
@@ -966,15 +1057,39 @@ function setTabState(id, fullscreen = false) {
   if (isRules) loadMissionRules();
 }
 
+function updateDevSettingsControls() {
+  if (elements.warningDisableToggle) elements.warningDisableToggle.checked = warningDisabled;
+  if (elements.copyCoordinatesToggle) elements.copyCoordinatesToggle.checked = copyCoordinatesOnTap;
+  if (elements.offlineModeToggle) elements.offlineModeToggle.checked = offlineMode;
+  if (elements.noUiModeToggle) elements.noUiModeToggle.checked = noUiMode;
+  if (elements.rulesRefreshButton) elements.rulesRefreshButton.disabled = !!offlineMode;
+  document.body.classList.toggle("no-ui-mode", noUiMode);
+  scheduleZoneOverlayUpdate();
+}
+
+function setNoUiMode(enabled, { persist = true, silent = false } = {}) {
+  const next = !!enabled;
+  if (noUiMode === next) {
+    if (elements.noUiModeToggle) elements.noUiModeToggle.checked = noUiMode;
+    return;
+  }
+  noUiMode = next;
+  if (persist) safeSetStorageItem(NO_UI_MODE_KEY, String(noUiMode));
+  document.body.classList.toggle("no-ui-mode", noUiMode);
+  if (!noUiMode) resetNoUiExitTracker();
+  updateDevSettingsControls();
+  if (!silent) showStatus(noUiMode ? "No UI mode enabled." : "No UI mode disabled.");
+}
+
 function bindPaneSwipes() {
   const targets = [
-    { el: elements.bottomPanel, id: null },
-    { el: elements.bottomPanelToggles, id: null },
-    { el: elements.statusToggleButton, id: "status" },
-    { el: elements.rulesToggleButton, id: "rules" },
+    { el: elements.bottomPanel, id: null, tabRail: false },
+    { el: elements.bottomPanelToggles, id: null, tabRail: true },
+    { el: elements.statusToggleButton, id: "status", tabRail: true },
+    { el: elements.rulesToggleButton, id: "rules", tabRail: true },
   ];
   for (const t of targets) {
-    t.el.addEventListener("pointerdown", (e) => beginPanelSwipe(e, t.id));
+    t.el.addEventListener("pointerdown", (e) => beginPanelSwipe(e, t.id, t.tabRail));
     t.el.addEventListener("pointermove", updatePanelSwipe);
     t.el.addEventListener("pointerup", endPanelSwipe);
     t.el.addEventListener("pointercancel", cancelPanelSwipe);
@@ -982,9 +1097,51 @@ function bindPaneSwipes() {
   }
 }
 
-function beginPanelSwipe(event, id) {
+function handleMapClick(event) {
+  if (noUiMode) {
+    registerNoUiExitClick();
+    return;
+  }
+  if (copyCoordinatesOnTap) copyMapCoordinates(event.latlng);
+}
+
+function copyMapCoordinates(latlng) {
+  if (!latlng) return;
+  const nearbyStop = getNearbyNamedStops(latlng, 1).sort((a, b) => a.distance - b.distance)[0];
+  const baseText = `${latlng.lat.toFixed(6)}, ${latlng.lng.toFixed(6)}`;
+  const text = nearbyStop
+    ? `${baseText} | nearest stop: ${nearbyStop.name} (${nearbyStop.distance.toFixed(2)} mi)`
+    : baseText;
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(
+      () => showStatus(`Copied ${text}.`),
+      () => showStatus(text, { persistent: true })
+    );
+    return;
+  }
+  showStatus(text, { persistent: true });
+}
+
+function registerNoUiExitClick() {
+  noUiExitClickCount += 1;
+  clearTimeout(noUiExitClickTimer);
+  noUiExitClickTimer = setTimeout(resetNoUiExitTracker, 1200);
+  if (noUiExitClickCount < 6) return;
+  resetNoUiExitTracker();
+  if (elements.noUiModeToggle) elements.noUiModeToggle.checked = false;
+  setNoUiMode(false);
+}
+
+function resetNoUiExitTracker() {
+  noUiExitClickCount = 0;
+  clearTimeout(noUiExitClickTimer);
+  noUiExitClickTimer = null;
+}
+
+function beginPanelSwipe(event, id, tabRail = false) {
   if (event.button !== undefined && event.button !== 0) return;
-  paneSwipeStart = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, id };
+  if (tabRail) event.stopPropagation();
+  paneSwipeStart = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, id, tabRail };
   paneSwipeHandled = false;
   try { event.currentTarget.setPointerCapture(event.pointerId); } catch (e) {}
 }
@@ -999,9 +1156,19 @@ function updatePanelSwipe(event) {
   const shouldFullscreen = dy < -200;
   const shouldOpen = dy < 0;
 
-  if (shouldFullscreen) setTabState(targetTab, true);
-  else if (shouldOpen) setTabState(targetTab, false);
-  else setTabState(null);
+  if (isFullscreen) {
+    if (dy > 70 && paneSwipeStart.tabRail) {
+      setTabState(targetTab, false);
+    } else {
+      return;
+    }
+  } else if (shouldFullscreen) {
+    setTabState(targetTab, true);
+  } else if (shouldOpen) {
+    setTabState(targetTab, false);
+  } else {
+    setTabState(null);
+  }
 
   paneSwipeHandled = true;
 }
@@ -1146,7 +1313,7 @@ async function loadMissionRules(options = {}) {
     }
     elements.rulesCards.replaceChildren(...parseRulesMarkdown(rulesMarkdown).map(renderRulesCategory));
 
-    if (options.checkRemote) {
+    if (options.checkRemote && !offlineMode) {
       await refreshRemoteRules(options.forceRemote);
     }
   } catch (e) { elements.rulesCards.innerHTML = `<article class="rule-card"><h2>Rules Error</h2><p>${e.message}</p></article>`; }
@@ -1156,6 +1323,10 @@ async function refreshRemoteRules(forceRemote = false) {
   const button = elements.rulesRefreshButton;
   if (button) button.disabled = true;
   try {
+    if (offlineMode) {
+      if (forceRemote) showStatus("Offline mode is enabled. Remote rules refresh is disabled.", { error: true });
+      return;
+    }
     const remoteText = await fetchRemoteRulesText();
     const remoteRules = parseVersionedRules(remoteText);
     if (!Number.isFinite(remoteRules.version) || remoteRules.version <= 0) {
@@ -1348,22 +1519,30 @@ function handlePositionError(e) {
 }
 
 function validatePlayerBounds() {
-  if (!lastPlayerPosition || !activeZoneFeature || !isWarningDateActive()) { elements.warningOverlay.hidden = true; return; }
+  if (!lastPlayerPosition || !activeZoneFeature || warningDisabled) {
+    setBoundaryWarningActive(false);
+    return;
+  }
   const inside = turf.booleanPointInPolygon(lastPlayerPosition, activeZoneFeature);
-  if (inside) { warningIgnoredForTesting = false; elements.warningOverlay.hidden = true; }
-  else elements.warningOverlay.hidden = warningIgnoredForTesting;
+  setBoundaryWarningActive(!inside);
 }
 
-function isWarningDateActive(d = new Date()) {
-  const m = d.getMonth(), day = d.getDate();
-  return (m > WARNING_START_MONTH_INDEX || (m === WARNING_START_MONTH_INDEX && day >= WARNING_START_DAY)) && (m < WARNING_END_MONTH_INDEX || (m === WARNING_END_MONTH_INDEX && day <= WARNING_END_DAY));
+function setBoundaryWarningActive(active) {
+  if (warningActive === active) return;
+  warningActive = active;
+  document.body.classList.toggle("boundary-warning-active", warningActive);
+  if (warningActive) {
+    showStatus("WARNING: YOU HAVE LEFT THE MISSION AREA. RETURN IMMEDIATELY.", { persistent: true, error: true });
+  } else {
+    elements.statusPanel.classList.remove("is-visible", "is-error");
+  }
 }
 
 function bindLongPress() {
   const c = map.getContainer();
   c.addEventListener("pointerdown", (e) => {
     if (e.button !== undefined && e.button !== 0) return;
-    if (e.target.closest("#zoomControls, #mapActions, .bottom-panel, #statusPanel, #warningOverlay")) return;
+    if (e.target.closest("#zoomControls, #mapActions, .bottom-panel, #statusPanel")) return;
     if (e.pointerType === "touch") {
       if (!activeTouchPointerIds.has(e.pointerId)) { activeTouchPointerIds.add(e.pointerId); activeTouchPointers++; }
       try { c.setPointerCapture(e.pointerId); } catch (err) {}
@@ -1388,12 +1567,16 @@ function endTouchPointer(e) {
 }
 
 function shrinkToPin(latlng, options = {}) {
-  const snap = options.snap === false ? null : findNearestNamedStop(latlng);
-  const active = snap ? L.latLng(snap.lat, snap.lng) : latlng;
+  const snap = options.snap === false ? { lat: latlng.lat, lng: latlng.lng, name: "restored pin" } : findNearestNamedStop(latlng);
+  if (!snap) {
+    showStatus("Pin must be placed on an approved RTD stop or station. Move closer and try again.", { persistent: true, error: true });
+    return;
+  }
+  const active = L.latLng(snap.lat, snap.lng);
   const circle = turf.circle(turf.point([active.lng, active.lat]), SHRINK_RADIUS_MILES, { steps: 144, units: "miles" });
   const intersect = turf.intersect(originalZoneFeature, circle);
   if (!intersect || !["Polygon", "MultiPolygon"].includes(intersect.geometry.type)) { showStatus("No overlap.", true); return; }
-  activeZoneFeature = turf.cleanCoords(intersect); radiusFeature = circle; droppedPinLatLng = active; warningIgnoredForTesting = false;
+  activeZoneFeature = turf.cleanCoords(intersect); radiusFeature = circle; droppedPinLatLng = active;
   renderMissionLayers(); renderPin(active, circle);
   if (options.persist !== false) savePin(active);
   validatePlayerBounds();
@@ -1446,7 +1629,7 @@ function renderPin(latlng, circle) {
 }
 
 function resetMap() {
-  activeZoneFeature = originalZoneFeature; radiusFeature = null; droppedPinLatLng = null; activeTouchPointers = 0; activeTouchPointerIds.clear(); touchMapInteractionActive = false; warningIgnoredForTesting = false;
+  activeZoneFeature = originalZoneFeature; radiusFeature = null; droppedPinLatLng = null; activeTouchPointers = 0; activeTouchPointerIds.clear(); touchMapInteractionActive = false;
   if (pinMarker) pinMarker.remove(); if (radiusLayer) radiusLayer.remove(); pinMarker = null; radiusLayer = null;
   safeRemoveStorageItem(STORED_PIN_KEY); renderMissionLayers(); scheduleZoneOverlayUpdate(); validatePlayerBounds();
   showStatus("Map reset.");
@@ -1457,7 +1640,7 @@ function restoreStoredPin() {
   const raw = safeGetStorageItem(STORED_PIN_KEY); if (!raw) return false;
   try {
     const p = JSON.parse(raw); if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng)) throw new Error();
-    shrinkToPin(L.latLng(p.lat, p.lng), { persist: false, showMessage: false }); return true;
+    shrinkToPin(L.latLng(p.lat, p.lng), { persist: false, showMessage: false, snap: false }); return true;
   } catch (e) { safeRemoveStorageItem(STORED_PIN_KEY); return false; }
 }
 
