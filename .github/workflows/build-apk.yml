@@ -33,7 +33,7 @@ jobs:
         working-directory: flutter_app
         run: flutter create --platforms=android --project-name hide_denver .
 
-      - name: Add Android runtime permissions
+      - name: Add Android runtime permissions and loopback cleartext policy
         working-directory: flutter_app
         run: |
           python3 - <<'PY'
@@ -48,7 +48,19 @@ jobs:
           missing = [permission for permission in permissions if permission not in text]
           if missing:
               text = text.replace('<application', '\n    ' + '\n    '.join(missing) + '\n    <application', 1)
-              manifest.write_text(text)
+          if 'android:usesCleartextTraffic=' not in text:
+              text = text.replace('<application', '<application\n        android:usesCleartextTraffic="true"', 1)
+          if 'android:networkSecurityConfig=' not in text:
+              text = text.replace('<application', '<application\n        android:networkSecurityConfig="@xml/network_security_config"', 1)
+          manifest.write_text(text)
+
+          network_security_config = Path('android/app/src/main/res/xml/network_security_config.xml')
+          network_security_config.parent.mkdir(parents=True, exist_ok=True)
+          network_security_config.write_text('''<?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+              <base-config cleartextTrafficPermitted="true" />
+          </network-security-config>
+          ''')
           PY
 
       - name: Install dependencies
