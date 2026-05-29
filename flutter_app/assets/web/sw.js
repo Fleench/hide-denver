@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_VERSION = "mission-area-v21";
+const CACHE_VERSION = "mission-area-v22";
 const APP_SHELL_CACHE = `${CACHE_VERSION}-app-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 
@@ -78,12 +78,17 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  if (url.origin === self.location.origin) {
+    event.respondWith(networkFirst(request, request.url));
+    return;
+  }
+
   if (url.hostname.endsWith("basemaps.cartocdn.com")) {
     event.respondWith(cacheFirst(request, RUNTIME_CACHE));
     return;
   }
 
-  event.respondWith(cacheFirst(request, APP_SHELL_CACHE));
+  event.respondWith(staleWhileRevalidate(request, APP_SHELL_CACHE));
 });
 
 async function cacheFirst(request, cacheName) {
@@ -98,10 +103,26 @@ async function cacheFirst(request, cacheName) {
   return response;
 }
 
+async function staleWhileRevalidate(request, cacheName) {
+  const cache = await caches.open(cacheName);
+  const cached = await cache.match(request);
+  const refreshed = fetch(request)
+    .then((response) => {
+      if (response && response.status < 400) {
+        cache.put(request, response.clone());
+      }
+      return response;
+    })
+    .catch(() => null);
+
+  return cached || refreshed;
+}
+
 async function networkFirst(request, fallbackUrl) {
   const cache = await caches.open(APP_SHELL_CACHE);
   try {
-    const response = await fetch(request);
+    const freshRequest = new Request(request, { cache: "reload" });
+    const response = await fetch(freshRequest);
     if (response && response.status < 400) {
       cache.put(request, response.clone());
     }

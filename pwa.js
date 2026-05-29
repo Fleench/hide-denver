@@ -1,6 +1,10 @@
 "use strict";
 
-if ("serviceWorker" in navigator) {
+const isLocalNativeShell = ["localhost", "127.0.0.1"].includes(
+  window.location.hostname,
+);
+
+if (!isLocalNativeShell && "serviceWorker" in navigator) {
   let refreshing = false;
 
   navigator.serviceWorker.addEventListener("controllerchange", () => {

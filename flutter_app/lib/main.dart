@@ -203,6 +203,9 @@ class LocalAssetServer {
       request.response
         ..statusCode = HttpStatus.ok
         ..headers.contentType = _contentType(normalizedPath)
+        ..headers.set(HttpHeaders.cacheControlHeader, 'no-store')
+        ..headers.set(HttpHeaders.pragmaHeader, 'no-cache')
+        ..headers.expires = DateTime.fromMillisecondsSinceEpoch(0)
         ..add(Uint8List.fromList(bytes));
     } catch (_) {
       request.response.statusCode = HttpStatus.notFound;
@@ -218,7 +221,10 @@ class LocalAssetServer {
       final remoteResponse = await remoteRequest.close();
       request.response
         ..statusCode = remoteResponse.statusCode
-        ..headers.contentType = ContentType('text', 'markdown', charset: 'utf-8');
+        ..headers.contentType = ContentType('text', 'markdown', charset: 'utf-8')
+        ..headers.set(HttpHeaders.cacheControlHeader, 'no-store')
+        ..headers.set(HttpHeaders.pragmaHeader, 'no-cache')
+        ..headers.expires = DateTime.fromMillisecondsSinceEpoch(0);
       await request.response.addStream(remoteResponse);
     } finally {
       client.close(force: true);
