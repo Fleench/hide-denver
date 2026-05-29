@@ -1,0 +1,41 @@
+{
+  "name": "Mission Area Companion",
+  "short_name": "Mission Area",
+  "description": "Offline-capable local IRL game companion map and rules.",
+  "start_url": "index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#101418",
+  "theme_color": "#101418",
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Map",
+      "short_name": "Map",
+      "url": "index.html"
+    },
+    {
+      "name": "Rules",
+      "short_name": "Rules",
+      "url": "rules.html"
+    },
+    {
+      "name": "Status",
+      "short_name": "Status",
+      "url": "status.html"
+    },
+    {
+      "name": "Dev Settings",
+      "short_name": "Dev",
+      "url": "index.html?tab=dev"
+    }
+  ]
+}
