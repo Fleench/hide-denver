@@ -13,7 +13,7 @@ const TRANSIT_VISIBLE_KEY = "hideDenver.linesStopsVisible";
 const LINE_NAMES_VISIBLE_KEY = "hideDenver.lineNamesVisible";
 const TRANSIT_CACHE_DB = "hideDenverTransitCache";
 const TRANSIT_CACHE_STORE = "processedTransit";
-const TRANSIT_CACHE_KEY = "transit-v4";
+const TRANSIT_CACHE_KEY = "transit-v5";
 const TRANSIT_WORKER_URL = "transit-worker.js";
 const REMOTE_RULES_URL = "https://denver.flench.me/rules.md";
 const REMOTE_RULES_PROXY_URL = "remote-rules.md";
@@ -1217,14 +1217,29 @@ function getStatusServiceLines() {
 function renderStatusCard(value, title, description) {
   const art = document.createElement("article");
   art.className = "status-card";
-  art.innerHTML = `<span class="status-number">${value}</span><h2>${title}</h2><p>${description}</p>`;
+
+  const number = document.createElement("span");
+  number.className = "status-number";
+  number.textContent = value;
+
+  const heading = document.createElement("h2");
+  heading.textContent = title;
+
+  const body = document.createElement("p");
+  body.textContent = description;
+
+  art.append(number, heading, body);
   return art;
 }
 
 function renderLineListCard(lines) {
   const art = document.createElement("article");
   art.className = "status-card status-card-wide";
-  art.innerHTML = `<h2>Lines in Use</h2>`;
+
+  const heading = document.createElement("h2");
+  heading.textContent = "Lines in Use";
+  art.appendChild(heading);
+
   const list = document.createElement("ul");
   list.className = "status-line-list";
   for (const l of lines) {
@@ -1316,7 +1331,19 @@ async function loadMissionRules(options = {}) {
     if (options.checkRemote && !offlineMode) {
       await refreshRemoteRules(options.forceRemote);
     }
-  } catch (e) { elements.rulesCards.innerHTML = `<article class="rule-card"><h2>Rules Error</h2><p>${e.message}</p></article>`; }
+  } catch (e) {
+    const card = document.createElement("article");
+    card.className = "rule-card";
+
+    const heading = document.createElement("h2");
+    heading.textContent = "Rules Error";
+
+    const message = document.createElement("p");
+    message.textContent = e.message || "Rules could not be loaded.";
+
+    card.append(heading, message);
+    elements.rulesCards.replaceChildren(card);
+  }
 }
 
 async function refreshRemoteRules(forceRemote = false) {
@@ -1418,21 +1445,59 @@ function parseRulesMarkdown(markdown) {
 function renderRulesCategory(cat) {
   const sec = document.createElement("section");
   sec.className = "rules-category";
-  sec.innerHTML = `<h2 class="rules-category-title">${cat.title}</h2>`;
+
+  const heading = document.createElement("h2");
+  heading.className = "rules-category-title";
+  heading.textContent = cat.title;
+  sec.appendChild(heading);
+
   const grid = document.createElement("div");
   grid.className = "rules-grid-pane";
-  cat.rules.forEach(r => {
-    const card = document.createElement("article"); card.className = "rule-card";
-    card.innerHTML = `<h2>${r.title}</h2><div class="rule-body">${parseInlineMarkdown(r.body.join("\n").trim())}</div>`;
+  cat.rules.forEach((r) => {
+    const card = document.createElement("article");
+    card.className = "rule-card";
+
+    const ruleHeading = document.createElement("h2");
+    ruleHeading.textContent = r.title;
+
+    const body = document.createElement("div");
+    body.className = "rule-body";
+    body.innerHTML = parseInlineMarkdown(r.body.join("\n").trim());
+
+    card.append(ruleHeading, body);
     grid.appendChild(card);
   });
-  sec.appendChild(grid); return sec;
+  sec.appendChild(grid);
+  return sec;
 }
 
 function parseInlineMarkdown(text) {
-  return text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`(.+?)`/g, "<code>$1</code>")
-    .split("\n").map(l => l.trim()).filter(Boolean).map(l => (l.startsWith("- ") || l.startsWith("* ")) ? `<li>${l.substring(2)}</li>` : `<p>${l}</p>`)
-    .join("").replace(/(<li>.*?<\/li>)+/g, "<ul>$&</ul>");
+  return String(text || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const content = (line.startsWith("- ") || line.startsWith("* ")) ? line.substring(2) : line;
+      const html = formatInlineMarkdown(content);
+      return (line.startsWith("- ") || line.startsWith("* ")) ? `<li>${html}</li>` : `<p>${html}</p>`;
+    })
+    .join("")
+    .replace(/(<li>.*?<\/li>)+/g, "<ul>$&</ul>");
+}
+
+function formatInlineMarkdown(text) {
+  return escapeHtml(text)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`(.+?)`/g, "<code>$1</code>");
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function bindConnectivityEvents() {
@@ -1484,16 +1549,41 @@ function lineFeatureIntersectsViewport(f, vp, vb) {
 }
 
 function renderVisibleRouteGroup(title, routes) {
-  const g = document.createElement("section"); g.className = "visible-routes-group";
-  g.innerHTML = `<h3>${title} (${routes.length} lines)</h3>`;
+  const g = document.createElement("section");
+  g.className = "visible-routes-group";
+
+  const heading = document.createElement("h3");
+  heading.textContent = `${title} (${routes.length} lines)`;
+  g.appendChild(heading);
+
   const list = document.createElement("ul");
-  for (const r of routes) {
-    const li = document.createElement("li"); li.className = "visible-routes-route"; li.style.setProperty("--line-color", r.color);
-    li.innerHTML = `<span class="visible-routes-route-color"></span><span class="visible-routes-route-label" title="${r.label}">${r.label}</span>`;
-    list.appendChild(li);
+  if (routes.length) {
+    for (const r of routes) {
+      list.appendChild(renderVisibleRouteItem(r.label, r.color));
+    }
+  } else {
+    list.appendChild(renderVisibleRouteItem("None", "rgba(247,250,252,0.24)"));
   }
-  if (!routes.length) list.innerHTML = `<li class="visible-routes-route" style="--line-color: rgba(247,250,252,0.24)"><span class="visible-routes-route-color"></span><span class="visible-routes-route-label">None</span></li>`;
-  g.appendChild(list); return g;
+
+  g.appendChild(list);
+  return g;
+}
+
+function renderVisibleRouteItem(label, color) {
+  const item = document.createElement("li");
+  item.className = "visible-routes-route";
+  item.style.setProperty("--line-color", color);
+
+  const swatch = document.createElement("span");
+  swatch.className = "visible-routes-route-color";
+
+  const routeLabel = document.createElement("span");
+  routeLabel.className = "visible-routes-route-label";
+  routeLabel.title = label;
+  routeLabel.textContent = label;
+
+  item.append(swatch, routeLabel);
+  return item;
 }
 
 function startForegroundTracking() {
