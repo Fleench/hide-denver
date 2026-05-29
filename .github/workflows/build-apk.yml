@@ -1,0 +1,78 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - '**'
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build and publish APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform files
+        working-directory: flutter_app
+        run: flutter create --platforms=android --project-name hide_denver .
+
+      - name: Add Android runtime permissions
+        working-directory: flutter_app
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          manifest = Path('android/app/src/main/AndroidManifest.xml')
+          text = manifest.read_text()
+          permissions = [
+              '<uses-permission android:name="android.permission.INTERNET" />',
+              '<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />',
+              '<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />',
+          ]
+          missing = [permission for permission in permissions if permission not in text]
+          if missing:
+              text = text.replace('<application', '\n    ' + '\n    '.join(missing) + '\n    <application', 1)
+              manifest.write_text(text)
+          PY
+
+      - name: Install dependencies
+        working-directory: flutter_app
+        run: flutter pub get
+
+      - name: Build release APK
+        working-directory: flutter_app
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: cp flutter_app/build/app/outputs/flutter-apk/app-release.apk hide-denver-${{ github.sha }}.apk
+
+      - name: Publish APK to rolling release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: android-latest
+          name: Latest Android APK
+          body: |
+            Automated APK build for `${{ github.ref_name }}` at `${{ github.sha }}`.
+          commit: ${{ github.sha }}
+          artifacts: hide-denver-${{ github.sha }}.apk
+          allowUpdates: true
+          replacesArtifacts: true
+          removeArtifacts: true
+          makeLatest: true
+          token: ${{ secrets.GITHUB_TOKEN }}

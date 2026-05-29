@@ -7,13 +7,14 @@ const BUS_ROUTES_URL = "assets/BusRoutes.geojson";
 const BUS_STOPS_URL = "assets/BusStops_Active.geojson";
 const RAIL_LINES_URL = "assets/LightrailLines_Offset.geojson";
 const RAIL_STATIONS_URL = "assets/LightrailStations.geojson";
+const APP_VERSION = "1.0.1";
 const SHRINK_RADIUS_MILES = 0.25;
 const STORED_PIN_KEY = "hideDenver.activePin";
 const TRANSIT_VISIBLE_KEY = "hideDenver.linesStopsVisible";
 const LINE_NAMES_VISIBLE_KEY = "hideDenver.lineNamesVisible";
 const TRANSIT_CACHE_DB = "hideDenverTransitCache";
 const TRANSIT_CACHE_STORE = "processedTransit";
-const TRANSIT_CACHE_KEY = "transit-v5";
+const TRANSIT_CACHE_KEY = "transit-v6";
 const TRANSIT_WORKER_URL = "transit-worker.js";
 const REMOTE_RULES_URL = "https://denver.flench.me/rules.md";
 const REMOTE_RULES_PROXY_URL = "remote-rules.md";
@@ -49,6 +50,7 @@ const elements = {
   rulesContent: document.querySelector("#rulesContent"),
   rulesCards: document.querySelector("#rulesCards"),
   devContent: document.querySelector("#devContent"),
+  appVersion: document.querySelector("#appVersion"),
   warningDisableToggle: document.querySelector("#warningDisableToggle"),
   copyCoordinatesToggle: document.querySelector("#copyCoordinatesToggle"),
   offlineModeToggle: document.querySelector("#offlineModeToggle"),
@@ -971,6 +973,7 @@ function bindControls() {
   if (elements.copyCoordinatesToggle) elements.copyCoordinatesToggle.checked = copyCoordinatesOnTap;
   if (elements.offlineModeToggle) elements.offlineModeToggle.checked = offlineMode;
   if (elements.noUiModeToggle) elements.noUiModeToggle.checked = noUiMode;
+  if (elements.appVersion) elements.appVersion.textContent = `v${APP_VERSION}`;
   updateDevSettingsControls();
 
   elements.centerButton.addEventListener("click", centerOnPlayerAndFollow);
@@ -1257,6 +1260,10 @@ function renderLineListCard(lines) {
     li.appendChild(btn); list.appendChild(li);
   }
   art.appendChild(list);
+
+  const selectedLine = lines.find(line => getTransitLineKey(line) === selectedTransitLineKey);
+  if (selectedLine) renderSelectedLine(art, selectedLine);
+
   return art;
 }
 
@@ -1294,6 +1301,8 @@ function focusTransitLine(line) {
   updateTransitToggleButton();
 
   const bounds = getTransitLineBounds(selectedTransitLineKey);
+  updateVisibleRoutesPanel();
+  if (activeTabId === "status") loadMissionStatus();
   scheduleZoneOverlayUpdate();
   if (!bounds || !bounds.isValid()) return;
 
@@ -1531,16 +1540,34 @@ function updateVisibleRoutesPanel() {
 
 function getVisibleTransitRoutes() {
   if (!map || !transitVisible || !transitFeatureCollection) return [];
+  const serviceLinesByKey = getServiceLinesByKey();
   const vb = map.getBounds();
   const vp = turf.bboxPolygon([vb.getWest(), vb.getSouth(), vb.getEast(), vb.getNorth()]);
   const routes = new Map();
   for (const f of transitFeatureCollection.features || []) {
     if (f.properties?.layer !== "line" || !f.properties?.label) continue;
     if (!lineFeatureIntersectsViewport(f, vp, vb)) continue;
-    const g = getRouteGroup(f), k = `${g}|${f.properties.route}|${f.properties.name}`;
-    if (!routes.has(k)) routes.set(k, { group: g, label: f.properties.label, color: f.properties.color || "#ff8a1c" });
+    const group = getRouteGroup(f);
+    const key = getTransitLineKey(f);
+    const routeKey = `${group}|${key}`;
+    const serviceLine = serviceLinesByKey.get(key);
+    if (!routes.has(routeKey)) {
+      routes.set(routeKey, {
+        group,
+        route: f.properties.route || "",
+        name: f.properties.name || "",
+        key,
+        label: f.properties.label,
+        color: f.properties.color || "#ff8a1c",
+        stops: serviceLine?.stops || [],
+      });
+    }
   }
   return [...routes.values()].sort((a, b) => (a.group !== b.group) ? (a.group === "Rail" ? -1 : 1) : a.label.localeCompare(b.label, undefined, { numeric: true }));
+}
+
+function getServiceLinesByKey() {
+  return new Map(getStatusServiceLines().map(line => [getTransitLineKey(line), line]));
 }
 
 function lineFeatureIntersectsViewport(f, vp, vb) {
@@ -1559,30 +1586,43 @@ function renderVisibleRouteGroup(title, routes) {
   const list = document.createElement("ul");
   if (routes.length) {
     for (const r of routes) {
-      list.appendChild(renderVisibleRouteItem(r.label, r.color));
+      list.appendChild(renderVisibleRouteItem(r));
     }
   } else {
-    list.appendChild(renderVisibleRouteItem("None", "rgba(247,250,252,0.24)"));
+    list.appendChild(renderVisibleRouteItem({ label: "None", color: "rgba(247,250,252,0.24)", disabled: true }));
   }
 
   g.appendChild(list);
   return g;
 }
 
-function renderVisibleRouteItem(label, color) {
+function renderVisibleRouteItem(route) {
   const item = document.createElement("li");
   item.className = "visible-routes-route";
-  item.style.setProperty("--line-color", color);
+  item.style.setProperty("--line-color", route.color);
+
+  const button = document.createElement("button");
+  button.className = "visible-routes-route-button";
+  button.type = "button";
+  button.disabled = !!route.disabled;
+  button.setAttribute("aria-pressed", String(!route.disabled && selectedTransitLineKey === getTransitLineKey(route)));
+  if (!route.disabled) {
+    button.addEventListener("click", () => {
+      focusTransitLine(route);
+      showStatus(`Selected ${route.label}.`);
+    });
+  }
 
   const swatch = document.createElement("span");
   swatch.className = "visible-routes-route-color";
 
   const routeLabel = document.createElement("span");
   routeLabel.className = "visible-routes-route-label";
-  routeLabel.title = label;
-  routeLabel.textContent = label;
+  routeLabel.title = route.label;
+  routeLabel.textContent = route.label;
 
-  item.append(swatch, routeLabel);
+  button.append(swatch, routeLabel);
+  item.appendChild(button);
   return item;
 }
 

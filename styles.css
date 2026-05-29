@@ -495,12 +495,22 @@ button {
 
 .dev-header-pane {
   flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
   padding-bottom: 12px;
   border-bottom: 1px solid rgb(255 255 255 / 0.12);
 }
 
 .dev-header-pane h2 {
   margin: 0;
+}
+
+.app-version {
+  color: rgb(247 250 252 / 0.68);
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .dev-settings-pane {
@@ -724,13 +734,33 @@ button {
 }
 
 .visible-routes-route {
+  min-height: 32px;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.visible-routes-route-button {
   display: grid;
   grid-template-columns: 5px minmax(0, 1fr);
+  width: 100%;
   min-height: 32px;
+  padding: 0;
   overflow: hidden;
   border: 1px solid rgb(255 255 255 / 0.1);
   border-radius: 8px;
   background: rgb(255 255 255 / 0.04);
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.visible-routes-route-button:disabled {
+  cursor: default;
+}
+
+.visible-routes-route-button[aria-pressed="true"] {
+  border-color: rgb(246 208 71 / 0.75);
+  background: rgb(246 208 71 / 0.14);
 }
 
 .visible-routes-route-color {
