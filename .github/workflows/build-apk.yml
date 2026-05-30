@@ -71,20 +71,37 @@ jobs:
         working-directory: flutter_app
         run: flutter build apk --release
 
-      - name: Rename APK
-        run: cp flutter_app/build/app/outputs/flutter-apk/app-release.apk hide-denver-${{ github.sha }}.apk
+      - name: Read app package metadata
+        working-directory: flutter_app
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
 
-      - name: Publish APK to rolling release
+          metadata = {}
+          for line in Path('pubspec.yaml').read_text().splitlines():
+              if ':' not in line or line.startswith(' '):
+                  continue
+              key, value = line.split(':', 1)
+              metadata[key.strip()] = value.strip().strip('"\'')
+
+          with Path(os.environ['GITHUB_ENV']).open('a') as env:
+              env.write(f"APP_NAME={metadata['name']}\n")
+              env.write(f"APP_VERSION={metadata['version']}\n")
+          PY
+
+      - name: Rename APK
+        run: cp flutter_app/build/app/outputs/flutter-apk/app-release.apk "${APP_NAME}-${APP_VERSION}.apk"
+
+      - name: Publish APK to new release
         uses: ncipollo/release-action@v1
         with:
-          tag: android-latest
-          name: Latest Android APK
+          tag: android-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ env.APP_NAME }} ${{ env.APP_VERSION }} APK
           body: |
-            Automated APK build for `${{ github.ref_name }}` at `${{ github.sha }}`.
+            Automated `${{ env.APP_NAME }}` APK build version `${{ env.APP_VERSION }}` for `${{ github.ref_name }}` at `${{ github.sha }}`.
+            Workflow run: `${{ github.run_id }}` attempt `${{ github.run_attempt }}`.
           commit: ${{ github.sha }}
-          artifacts: hide-denver-${{ github.sha }}.apk
-          allowUpdates: true
-          replacesArtifacts: true
-          removeArtifacts: true
+          artifacts: ${{ env.APP_NAME }}-${{ env.APP_VERSION }}.apk
           makeLatest: true
           token: ${{ secrets.GITHUB_TOKEN }}
